@@ -1,0 +1,62 @@
+T530C 000:044.318   SEGGER J-Link V6.70e Log File
+T530C 000:044.769   DLL Compiled: Apr 17 2020 17:55:05
+T530C 000:044.779   Logging started @ 2026-01-22 02:07
+T530C 000:044.793 JLINK_SetWarnOutHandler(...)
+T530C 000:044.805 - 0.016ms
+T530C 000:044.819 JLINK_OpenEx(...)
+T530C 000:046.180   Firmware: J-Link ARM-OB STM32 compiled Aug 22 2012 19:52:04
+T530C 000:047.899   Hardware: V7.00
+T530C 000:047.928   S/N: 20090928
+T530C 000:047.941   OEM: SEGGER
+T530C 000:047.955   Feature(s): RDI,FlashDL,FlashBP,JFlash,GDB
+T530C 000:048.837   TELNET listener socket opened on port 19021
+T530C 000:049.019   WEBSRV Starting webserver
+T530C 000:049.264   WEBSRV Webserver running on local port 19080
+T530C 000:049.284 - 4.469ms returns "O.K."
+T530C 000:049.317 JLINK_GetEmuCaps()
+T530C 000:049.327 - 0.014ms returns 0x88EA5833
+T530C 000:049.339 JLINK_TIF_GetAvailable(...)
+T530C 000:049.544 - 0.223ms
+T530C 000:049.584 JLINK_SetErrorOutHandler(...)
+T530C 000:049.595 - 0.015ms
+T530C 000:049.629 JLINK_ExecCommand("ProjectFile = "D:\table2\STM32资料\LXB\0303-鹿小班LXB407ZGT6-P1客户资料\【1】参考例程\标准库\彩色液晶屏驱动-基于1.54寸240x240分辨率\Project\JLinkSettings.ini"", ...). 
+T530C 000:060.809 - 11.208ms returns 0x00
+T530C 000:067.386 JLINK_ExecCommand("Device = STM32F407ZGTx", ...). 
+T530C 000:074.437   Device "STM32F407ZG" selected.
+T530C 000:074.893 - 7.480ms returns 0x00
+T530C 000:074.917 JLINK_ExecCommand("DisableConnectionTimeout", ...). 
+T530C 000:074.936 - 0.010ms returns 0x01
+T530C 000:074.948 JLINK_GetHardwareVersion()
+T530C 000:074.958 - 0.014ms returns 0x11170
+T530C 000:074.970 JLINK_GetDLLVersion()  returns 67005
+T530C 000:074.991 JLINK_GetFirmwareString(...)
+T530C 000:075.001 - 0.013ms
+T530C 000:093.521 JLINK_GetDLLVersion()  returns 67005
+T530C 000:093.552 JLINK_GetCompileDateTime()
+T530C 000:093.561 - 0.014ms
+T530C 000:101.090 JLINK_GetFirmwareString(...)
+T530C 000:101.117 - 0.032ms
+T530C 000:107.848 JLINK_GetHardwareVersion()
+T530C 000:107.877 - 0.034ms returns 0x11170
+T530C 000:126.063 JLINK_TIF_Select(JLINKARM_TIF_JTAG)
+T530C 000:127.666 - 1.615ms returns 0x00
+T530C 000:127.700 JLINK_SetSpeed(5000)
+T530C 000:127.787 - 0.093ms
+T530C 000:127.802 JLINK_GetIdData(pIdData)
+T530C 000:132.699   Could not measure total IR len. TDO is constant high.
+T530C 000:136.455   STM32 (connect): Can not attach to CPU. Trying connect under reset.
+T530C 000:192.425   Could not measure total IR len. TDO is constant high.
+T530C 000:192.882   
+  ***** Error: 
+T530C 000:192.900   STM32: Connecting to CPU via connect under reset failed.
+T530C 000:310.133   Could not measure total IR len. TDO is constant high.
+T530C 000:313.903   STM32 (connect): Can not attach to CPU. Trying connect under reset.
+T530C 000:369.475   Could not measure total IR len. TDO is constant high.
+T530C 000:369.947   
+  ***** Error: 
+T530C 000:369.973   STM32: Connecting to CPU via connect under reset failed.
+T530C 000:420.154 - 292.373ms
+T530C 031:715.251 JLINK_Close()
+T530C 031:725.599 - 10.369ms
+T530C 031:725.626   
+T530C 031:725.636   Closed

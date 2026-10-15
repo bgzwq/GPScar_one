@@ -1,0 +1,20 @@
+# Keil MDK 编译产物
+Objects/
+Listings/
+*.o
+*.axf
+*.crf
+*.d
+*.dep
+*.htm
+*.lnp
+*.lst
+*.map
+*.sct
+*.bak
+*.build_log.htm
+*.iex
+*.i
+*.__i
+*.scvd
+*.dbgconf

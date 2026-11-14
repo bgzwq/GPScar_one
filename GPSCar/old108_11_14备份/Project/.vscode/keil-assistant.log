@@ -1,0 +1,67 @@
+[info] Log at : 2026/9/21|22:18:03|GMT+0800
+
+[info] Log at : 2026/9/22|17:07:55|GMT+0800
+
+[info] Log at : 2026/9/22|18:18:42|GMT+0800
+
+[info] Log at : 2026/9/23|10:10:03|GMT+0800
+
+[info] Log at : 2026/9/25|10:11:15|GMT+0800
+
+[info] Log at : 2026/9/26|12:46:38|GMT+0800
+
+[info] Log at : 2026/9/30|06:30:38|GMT+0800
+
+[info] Log at : 2026/9/30|16:05:17|GMT+0800
+
+[info] Log at : 2026/9/30|21:26:08|GMT+0800
+
+[info] Log at : 2026/10/4|14:46:00|GMT+0800
+
+[info] Log at : 2026/10/4|15:01:17|GMT+0800
+
+[info] Log at : 2026/10/6|21:41:33|GMT+0800
+
+[info] Log at : 2026/10/7|11:35:24|GMT+0800
+
+[info] Log at : 2026/10/9|10:48:02|GMT+0800
+
+[info] Log at : 2026/10/13|13:24:26|GMT+0800
+
+[info] Log at : 2026/11/2|21:24:44|GMT+0800
+
+[info] Log at : 2026/11/2|21:24:49|GMT+0800
+
+[SyntaxError: Unexpected token '﻿', "﻿{
+    "c"... is not valid JSON
+	at JSON.parse (<anonymous>)
+	at F.updateCppProperties (c:\Users\liaoxiangpeng\.vscode\extensions\cl.keil-assistant-1.7.0\dist\extension.js:1:10849)
+	at F.<anonymous> (c:\Users\liaoxiangpeng\.vscode\extensions\cl.keil-assistant-1.7.0\dist\extension.js:1:12579)
+	at Generator.next (<anonymous>)
+	at c:\Users\liaoxiangpeng\.vscode\extensions\cl.keil-assistant-1.7.0\dist\extension.js:1:4480
+	at new Promise (<anonymous>)
+	at r (c:\Users\liaoxiangpeng\.vscode\extensions\cl.keil-assistant-1.7.0\dist\extension.js:1:4225)
+	at F.load (c:\Users\liaoxiangpeng\.vscode\extensions\cl.keil-assistant-1.7.0\dist\extension.js:1:11310)
+	at w.<anonymous> (c:\Users\liaoxiangpeng\.vscode\extensions\cl.keil-assistant-1.7.0\dist\extension.js:1:8737)
+	at Generator.next (<anonymous>)
+	at a (c:\Users\liaoxiangpeng\.vscode\extensions\cl.keil-assistant-1.7.0\dist\extension.js:1:4282)
+	at process.processTicksAndRejections (node:internal/process/task_queues:104:5)]
+[info] Log at : 2026/11/8|18:35:10|GMT+0800
+
+[SyntaxError: Unexpected token '﻿', "﻿{
+    "c"... is not valid JSON
+	at JSON.parse (<anonymous>)
+	at F.updateCppProperties (c:\Users\liaoxiangpeng\.vscode\extensions\cl.keil-assistant-1.7.0\dist\extension.js:1:10849)
+	at F.<anonymous> (c:\Users\liaoxiangpeng\.vscode\extensions\cl.keil-assistant-1.7.0\dist\extension.js:1:12579)
+	at Generator.next (<anonymous>)
+	at c:\Users\liaoxiangpeng\.vscode\extensions\cl.keil-assistant-1.7.0\dist\extension.js:1:4480
+	at new Promise (<anonymous>)
+	at r (c:\Users\liaoxiangpeng\.vscode\extensions\cl.keil-assistant-1.7.0\dist\extension.js:1:4225)
+	at F.load (c:\Users\liaoxiangpeng\.vscode\extensions\cl.keil-assistant-1.7.0\dist\extension.js:1:11310)
+	at w.<anonymous> (c:\Users\liaoxiangpeng\.vscode\extensions\cl.keil-assistant-1.7.0\dist\extension.js:1:8737)
+	at Generator.next (<anonymous>)
+	at a (c:\Users\liaoxiangpeng\.vscode\extensions\cl.keil-assistant-1.7.0\dist\extension.js:1:4282)]
+[info] Log at : 2026/11/12|21:03:55|GMT+0800
+
+[info] Log at : 2026/11/13|14:03:01|GMT+0800
+

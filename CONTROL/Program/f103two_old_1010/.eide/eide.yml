@@ -232,7 +232,7 @@ targets:
           vendor: "null"
         otherCmds: ""
         proType: 1
-        speed: 8000
+        speed: 4000
       STLink:
         address: "0x8000000"
         bin: ""
@@ -243,4 +243,4 @@ targets:
         resetMode: default
         runAfterProgram: true
         speed: 4000
-    uploader: STLink
+    uploader: JLink

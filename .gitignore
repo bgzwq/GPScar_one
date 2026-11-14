@@ -2,19 +2,30 @@
 Objects/
 Listings/
 *.o
+*.obj
 *.axf
+*.elf
+*.hex
+*.bin
+*.srec
 *.crf
 *.d
 *.dep
-*.htm
 *.lnp
 *.lst
 *.map
-*.sct
-*.bak
 *.build_log.htm
 *.iex
 *.i
 *.__i
-*.scvd
-*.dbgconf
+
+# Keil IDE 用户界面状态
+*.uvguix.*
+
+# CMSIS 软件包文件（设备支持库和模板）
+**/.cmsis/
+
+# 临时文件
+*.bak
+*.tmp
+*.orig

@@ -16,11 +16,11 @@
         {
             "name": "Target 1",
             "includePath": [
-                "d:\\table2\\GPScar\\Control\\f103two_new\\Start",
-                "d:\\table2\\GPScar\\Control\\f103two_new\\Library",
-                "d:\\table2\\GPScar\\Control\\f103two_new\\User",
-                "d:\\table2\\GPScar\\Control\\f103two_new\\System",
-                "d:\\table2\\GPScar\\Control\\f103two_new\\Hardware",
+                "d:\\table2\\GPSCar_PRO\\CONTROL\\Program\\f103two_old_1010\\Start",
+                "d:\\table2\\GPSCar_PRO\\CONTROL\\Program\\f103two_old_1010\\Library",
+                "d:\\table2\\GPSCar_PRO\\CONTROL\\Program\\f103two_old_1010\\User",
+                "d:\\table2\\GPSCar_PRO\\CONTROL\\Program\\f103two_old_1010\\System",
+                "d:\\table2\\GPSCar_PRO\\CONTROL\\Program\\f103two_old_1010\\Hardware",
                 "E:\\keil5\\MDK\\ARM\\ARMCC\\include",
                 "E:\\keil5\\MDK\\ARM\\ARMCC\\include\\rw"
             ],

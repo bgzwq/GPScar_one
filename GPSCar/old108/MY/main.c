@@ -83,6 +83,9 @@
 #include "navlog.h"
 #include "mapview.h"
 #include "bsp.h"
+/*---------------------- FreeRTOS ----------------------------*/
+#include "FreeRTOS.h"
+#include "task.h"
 
 
 /*---------------------- 运行参数 ----------------------------*/
@@ -100,6 +103,15 @@
 #define ALARM_ON_COUNT		3		// 连续N次落在区间内才触发(滤毛刺)
 #define ALARM_OFF_COUNT		3		// 连续N次离开区间才解除(回差防抖)
 #define ALARM_FREQ_HZ		3500	// 警报音调
+
+/*---------------------- RTOS 任务参数 ----------------------------*/
+/* 优先级: 数值越大越高。Idle=0, 软件定时器任务=31(configTIMER_TASK_PRIORITY)。
+   心跳给 3 > 应用 2, 保证超声波长阻塞时 LED 节拍不受影响。 */
+#define APP_TASK_PRIO		2
+#define APP_TASK_STACK		1024	// 单位 word(4B) => 4KB, 要跑 FatFs/LCD/printf
+									// 实测最深调用链 1780B, 留 2 倍余量
+#define LED_TASK_PRIO		3
+#define LED_TASK_STACK		128		// 512B, 只翻转一个 IO
 
 /*---------------------- 共享运行状态(menu.c 人机交互共用, 声明见 menu.h) ---*/
 WorkMode_TypeDef g_mode       = MODE_MANUAL;
@@ -133,28 +145,73 @@ static void App_UltraAlarm(float dist);
 static void App_AvoidTask(uint32_t now);
 static void App_RadarTask(uint32_t now);
 
+/* RTOS 任务 */
+static void AppTask(void *pvParameters);
+static void LedTask(void *pvParameters);
+
 
 /***************************************************************************************************
 *	函 数 名: main
-*	函数功能: 运行主程序
+*	函数功能: 初始化全部外设, 创建任务并启动 FreeRTOS 调度器
+*
+*	说    明: 【RTOS 兼容改动】
+*			1. 先把 NVIC 优先级分组锁死为 Group_4(4 位全部作为抢占优先级)。
+*			   FreeRTOS 的 BASEPRI 临界区机制要求所有实现的优先级位都是抢占位;
+*			   若改成常见的 NVIC_PriorityGroup_2, 临界区会错位, 表现为随机死机。
+*			2. App_Init() 仍在调度器启动前完成 —— BSP_Init() 里的 Delay_ms()
+*			   会自动走"忙等"分支(见 delay.c), 不需要改任何驱动。
+*			3. 业务逻辑整体搬进 AppTask, 框架与裸机版本一一对应。
 ****************************************************************************************************/
 int main(void)
+{
+	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);		/* FreeRTOS 硬性要求 */
+
+	App_Init();		// 全部外设初始化（必须在调度器启动之前）
+
+	/* 应用主任务: 原来 while(1) 里的全部业务 */
+	if (xTaskCreate(AppTask, "APP", APP_TASK_STACK, NULL, APP_TASK_PRIO, NULL) != pdPASS)
+	{
+		printf("[RTOS] create AppTask failed\r\n");
+		while (1);
+	}
+
+	/* 心跳任务: 只翻转 PC13, 与应用任务解耦, 也是以后加任务的抄写模板 */
+	if (xTaskCreate(LedTask, "LED", LED_TASK_STACK, NULL, LED_TASK_PRIO, NULL) != pdPASS)
+	{
+		printf("[RTOS] create LedTask failed\r\n");
+		while (1);
+	}
+
+	vTaskStartScheduler();		/* 正常情况下不返回 */
+
+	/* 只有堆不足导致调度器起不来才会走到这里 */
+	printf("[RTOS] scheduler start failed (heap?)\r\n");
+	while (1);
+}
+
+/***************************************************************************************************
+*	函 数 名: AppTask
+*	函数功能: 应用主任务 —— 承载原来 main() 的 while(1) 主循环
+*
+*	说    明: 周期判定仍用 Get_Ms()(TIM2 时基), 与裸机版本的时间语义完全一致;
+*			  循环末尾 vTaskDelay(1) 让出 1 个 tick, 避免独占 CPU 把心跳任务饿死。
+*			  12 处 Delay_ms() 现在会在任务里自动转成 vTaskDelay, 不再死等。
+****************************************************************************************************/
+static void AppTask(void *pvParameters)
 {
 	uint32_t now;
 	uint32_t lastEnc    = 0;	// 编码器反馈刷新(20ms, 仅显示, 无PID)
 	uint32_t lastKey    = 0;
 	uint32_t lastSensor = 0;
 	uint32_t lastLCD    = 0;
-	uint32_t lastHeart  = 0;
 
-	App_Init();		// 全部外设初始化
+	(void)pvParameters;
 
-	while (1)
+	for (;;)
 	{
 		now = Get_Ms();
 
-		/* 20ms: 编码器反馈刷新 —— 只更新菜单显示用的轮速, PID闭环保持注释不启用
-		 * (如需恢复PID: 把 Car_SpeedUpdate 换回 Car_PID_Update, 并取消 car.c/car.h 中PID相关注释) */
+		/* 20ms: 编码器反馈刷新 —— 只更新菜单显示用的轮速, PID闭环保持注释不启用 */
 		if ((uint32_t)(now - lastEnc) >= 20)
 		{
 			lastEnc = now;
@@ -182,24 +239,39 @@ int main(void)
 			Menu_Refresh();
 		}
 
-		/* 500ms: 板载LED心跳 */
-		if ((uint32_t)(now - lastHeart) >= 500)
-		{
-			lastHeart = now;
-			LED1_Toggle;
-		}
-
 		/* 每次循环: 处理通信指令 */
 		App_BTProcess();
 		App_ASRProcess();
 		K230_Process();			// K230视觉指令
-		K230_GrabTask();		// 夹取挂起超时收尾(没有机械臂时保证流程不卡住)
+		K230_GrabTask();		// 夹取挂起超时收尾
 		LanyaCon_Task(now);		// 蓝牙遥控掉线保护
 		Buzzer_Task();			// 非阻塞蜂鸣到点静音
 
 		/* 模式任务 */
 		if (g_mode == MODE_AVOID)      App_AvoidTask(now);
 		else if (g_mode == MODE_RADAR) App_RadarTask(now);
+
+		vTaskDelay(1);			/* 让出 1 tick */
+	}
+}
+
+/***************************************************************************************************
+*	函 数 名: LedTask
+*	函数功能: 心跳任务 —— 每 500ms 翻转板载 LED1(PC13)
+*
+*	说    明: 用 vTaskDelayUntil 保证周期不漂移。它是"调度器真的在运行"的最直观证据:
+*			  即使 AppTask 卡在超声波 30ms 超时里, 这颗灯也照样 500ms 跳一次。
+****************************************************************************************************/
+static void LedTask(void *pvParameters)
+{
+	TickType_t lastWake = xTaskGetTickCount();
+
+	(void)pvParameters;
+
+	for (;;)
+	{
+		LED1_Toggle;
+		vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(500));
 	}
 }
 
@@ -503,4 +575,44 @@ static void App_RadarTask(uint32_t now)
 	g_distRadar = Ultrasonic_GetDistance(ULTRA_RADAR);
 
 	printf("RADAR,%d,%d\r\n", (int)g_servoAngle, (int)g_distRadar);
+}
+
+/*=================================================================================================
+ *                          FreeRTOS 回调函数
+ *  对应 MY/FreeRTOSConfig.h:
+ *      configCHECK_FOR_STACK_OVERFLOW = 2
+ *      configUSE_MALLOC_FAILED_HOOK   = 1
+ *      configASSERT(x) -> vAssertCalled()
+ *===============================================================================================*/
+
+/* 栈溢出: 说明某个任务的栈写穿了。
+ * 这里故意不调 printf —— 此时栈已经不可信, 打印大概率二次 HardFault。
+ * 调试方法: 全速跑, 触发后在调试器里看 g_stackOverflowTask 指向的任务名,
+ *           回到 xTaskCreate 处把对应 APP_TASK_STACK / LedTask 的栈调大。 */
+volatile const char *g_stackOverflowTask = 0;
+
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+	(void)xTask;
+	g_stackOverflowTask = pcTaskName;
+	taskDISABLE_INTERRUPTS();
+	for (;;);
+}
+
+/* 堆分配失败: 任务/队列/信号量创建时 configTOTAL_HEAP_SIZE(36KB) 不够会进这里 */
+void vApplicationMallocFailedHook(void)
+{
+	printf("[RTOS] MALLOC FAILED: configTOTAL_HEAP_SIZE too small\r\n");
+	taskDISABLE_INTERRUPTS();
+	for (;;);
+}
+
+/* 断言失败: 关中断后死循环。调试时在这里下断点, 读 pcFile / ulLine 即可定位。
+ * (原来的实现是 printf, 在 RTOS 下可能在 fputc 互斥量里重入而死等, 已替换) */
+void vAssertCalled(const char *pcFile, unsigned long ulLine)
+{
+	(void)pcFile;
+	(void)ulLine;
+	__disable_irq();
+	for (;;);
 }

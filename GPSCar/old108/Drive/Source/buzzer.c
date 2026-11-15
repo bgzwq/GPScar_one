@@ -57,7 +57,7 @@ void Buzzer_Init(void)
 
 	/* 更新中断: 翻转蜂鸣器引脚 */
 	NVIC_InitStructure.NVIC_IRQChannel = BUZZER_IRQn;
-	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 2;
+	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 6;
 	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 2;
 	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
 	NVIC_Init(&NVIC_InitStructure);

@@ -88,14 +88,17 @@ void UsageFault_Handler(void)
   }
 }
 
-/**
-  * @brief  This function handles SVCall exception.
-  * @param  None
-  * @retval None
-  */
-void SVC_Handler(void)
-{
-}
+/*----------------------------------------------------------------------------*/
+/*  [RTOS 兼容改动] SVC_Handler / PendSV_Handler / SysTick_Handler 三个空函数    */
+/*  已删除, 改由 FreeRTOS 移植层 port.c 提供(启动文件里它们是 [WEAK], 删除后会    */
+/*  自动落到 port.o 的强符号)。对应改名在 MY/FreeRTOSConfig.h:                   */
+/*      #define vPortSVCHandler    SVC_Handler                                 */
+/*      #define xPortPendSVHandler PendSV_Handler                              */
+/*      #define xPortSysTickHandler SysTick_Handler                             */
+/*  保留同名空函数会与 port.o 撞成 L6200E 重复定义; 把 SysTick 留在本文件里则会  */
+/*  让 FreeRTOS 拿不到节拍(vTaskDelay 永不返回)。                                */
+/*----------------------------------------------------------------------------*/
+
 
 /**
   * @brief  This function handles Debug Monitor exception.
@@ -106,25 +109,8 @@ void DebugMon_Handler(void)
 {
 }
 
-/**
-  * @brief  This function handles PendSVC exception.
-  * @param  None
-  * @retval None
-  */
-void PendSV_Handler(void)
-{
-}
 
 
-extern void TimingDelay_Decrement(void);	//函数声明，定义在delay.c
-
-//	函数：SysTick中断服务处理
-//
-void SysTick_Handler(void)
-{
-	TimingDelay_Decrement();
-
-}
 
 
 

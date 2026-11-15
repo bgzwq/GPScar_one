@@ -5,45 +5,59 @@
    ***************************************************************************
    *  @description
 	*
-	*  SysTick定时器配置为1ms中断，实现毫秒延时
-	* 	
+	*  【RTOS 兼容改动】
+	*  原来这里把 SysTick 配成 1ms 中断、用 TimingDelay 计数来实现 Delay_ms()。
+	*  但 SysTick 现在归 FreeRTOS 内核所有(configTICK_RATE_HZ=1000, 1 tick = 1ms),
+	*  两者不可能共存。因此:
+	*    1) Delay_Init() 不再配置 SysTick(配了也会被 vTaskStartScheduler 覆盖),
+	*       它只负责把 TIM2 微秒时基准备好;
+	*    2) Delay_ms() 改成"双路径":
+	*         - 调度器已运行 且 不在中断里 -> vTaskDelay(), 把 CPU 让给别的任务
+	*         - 启动阶段(调度器未运行)或中断里 -> 用 TIM2 时基忙等
+	*       这样上层 12 处 Delay_ms() 调用一行都不用改;
+	*    3) TimingDelay_Decrement() 已删除(它只服务于旧的 SysTick 计数)。
+	*  Delay_us() 定义在 timer.c 里, 基于 TIM2, 完全不受影响。
+	*
 	***************************************************************************
 ***/
 
 #include "delay.h"
 #include "timer.h"
-
-static __IO uint32_t TimingDelay;  //计数变量
-
+#include "FreeRTOS.h"
+#include "task.h"
 
 //	函数：延时初始化
-//	说明：配置 SysTick 为1ms中断，并启动定时器
+//	说明：SysTick 已交给 FreeRTOS，这里只保证 TIM2 微秒时基就绪
 //
 void Delay_Init(void)
 {
-	SysTick_Config(SystemCoreClock / 1000);  //配置SysTick时钟为1ms中断
+	/* Timer_Init() 是幂等的: bsp.c 里紧接着还会再调一次, 重复调用无害 */
+	Timer_Init();
 }
 
-//	函数：计时函数
-//	说明：在 SysTick 中断服务函数里被调用
-//
-void TimingDelay_Decrement(void)
-{
-	if (TimingDelay != 0)
-	{ 
-		TimingDelay--;
-	}
-}
-
-//	函数：毫秒延时
+//	函数：毫秒延时(RTOS 兼容)
 // 参数：nTime - 延时时间，单位ms
-//	说明：每次调用都会重新给TimingDelay赋值，实现 n 毫秒的延时，最大延时 4294967295 ms。	
+//	说明：调度器运行中则转成 vTaskDelay 让出 CPU；否则用 TIM2 忙等。
+//	      注意 nTime 需 < 4294967 (乘 1000 不能溢出)，实际用法远小于此。
 //
 void Delay_ms(uint32_t nTime)
-{ 
-	TimingDelay = nTime;
+{
+	uint32_t start;
 
-	while(TimingDelay != 0);
+	if (nTime == 0) return;
+
+	/* 调度器已启动、且当前不在中断上下文 -> 用 RTOS 延时 */
+	if (xTaskGetSchedulerState() == taskSCHEDULER_RUNNING && __get_IPSR() == 0)
+	{
+		vTaskDelay(pdMS_TO_TICKS(nTime));
+		return;
+	}
+
+	/* 启动阶段或中断里 -> 用 TIM2 微秒时基忙等 */
+	start = Get_Us();
+	while ((uint32_t)(Get_Us() - start) < (nTime * 1000u))
+	{
+	}
 }
 
 

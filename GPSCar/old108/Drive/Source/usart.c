@@ -1,8 +1,8 @@
 /***
 	*************************************************************************************************
 	*	@version V1.0
-	*	@author  Â¹Ğ¡ï¿½ï¿½Æ¼ï¿½	
-	*	@brief   usart ï¿½Ó¿ï¿½ï¿½ï¿½Øºï¿½ï¿½ï¿½
+	*	@author  Â¹Ğ¡ï¿½ï¿½Æ¼ï¿?
+	*	@brief   usart ï¿½Ó¿ï¿½ï¿½ï¿½Øºï¿½ï¿½ï¿?
    *************************************************************************************************
    *  @description
 	*
@@ -21,6 +21,16 @@
 
 
 #include "usart.h"  
+
+/* --- [RTOS ¼æÈİ¸Ä¶¯] printf ´®ĞĞ»¯ ---
+ * USART1 ÊÇ"µ÷ÊÔ printf + K230 ÊÓ¾õ"¹²ÓÃ¿Ú, ¶à¸öÈÎÎñÍ¬Ê± printf »áÈÃÊä³ö»¥ÏàÅü¶Ï,
+ * ¶ø MicroLIB µÄ printf ±¾Éí²»¿ÉÖØÈë¡£ÕâÀïÓÃÒ»¸ö»¥³âÁ¿°Ñ fputc µÄ·¢ËÍ¹ı³ÌËøÆğÀ´¡£
+ * µ÷¶ÈÆ÷Æô¶¯Ç° / ÖĞ¶ÏÉÏÏÂÎÄÀï²»½øËø, Ö»×öÂã·¢ËÍ(´ËÊ±»¹Ã»²¢·¢, °²È«)¡£ */
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
+
+static SemaphoreHandle_t s_dbgMutex = NULL;	/* printf ´®ĞĞ»¯ÓÃ */
 
 // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½usart IOï¿½Ú³ï¿½Ê¼ï¿½ï¿½
 //
@@ -57,7 +67,7 @@ void Usart_Config(void)
 	// IOï¿½Ú³ï¿½Ê¼ï¿½ï¿½
 	USART_GPIO_Config();
 		 
-	// ï¿½ï¿½ï¿½Ã´ï¿½ï¿½Ú¸ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+	// ï¿½ï¿½ï¿½Ã´ï¿½ï¿½Ú¸ï¿½ï¿½ï¿½ï¿½ï¿½ï¿?
 	USART_InitStructure.USART_BaudRate 	 = USART1_BaudRate; //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 	USART_InitStructure.USART_WordLength = USART_WordLength_8b; //ï¿½ï¿½ï¿½ï¿½Î»8Î»
 	USART_InitStructure.USART_StopBits   = USART_StopBits_1; //Í£Ö¹Î»1Î»
@@ -67,17 +77,48 @@ void Usart_Config(void)
 	
 	USART_Init(USART1,&USART_InitStructure); //ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½1
 	USART_Cmd(USART1,ENABLE);	//Ê¹ï¿½Ü´ï¿½ï¿½ï¿½1
+
+	/* [RTOS ¼æÈİ¸Ä¶¯] ´´½¨ printf »¥³âÁ¿(µ÷¶ÈÆ÷Æô¶¯Ç°´´½¨, heap_4 ¿ÉÖ±½ÓÓÃ) */
+	if (s_dbgMutex == NULL)
+	{
+		s_dbgMutex = xSemaphoreCreateMutex();
+	}
 }
 
 // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø¶ï¿½ï¿½ï¿½fputcï¿½ï¿½ï¿½ï¿½
 
+/*---------------------------------------------------------------
+ *  [RTOS ¼æÈİ¸Ä¶¯] fputc ´®ĞĞ»¯
+ *  ¼ÓËøÌõ¼ş: »¥³âÁ¿ÒÑ´´½¨ + µ÷¶ÈÆ÷ÔÚÅÜ + ²»ÔÚÖĞ¶ÏÀï¡£
+ *  ÆäÓàÇé¿ö(Æô¶¯½×¶Î/ÖĞ¶ÏÀï)Ö±½Ó·¢ËÍ, ±ÜÃâÔÚÖĞ¶ÏÉÏÏÂÎÄÀïµ÷ÓÃ RTOS API¡£
+ *-------------------------------------------------------------*/
+static uint8_t Usart_DebugLock(void)
+{
+	if (s_dbgMutex != NULL &&
+		xTaskGetSchedulerState() == taskSCHEDULER_RUNNING &&
+		__get_IPSR() == 0)
+	{
+		xSemaphoreTake(s_dbgMutex, portMAX_DELAY);
+		return 1;
+	}
+	return 0;
+}
+
 int fputc(int c, FILE *fp)
 {
+	uint8_t locked = Usart_DebugLock();
 
-	USART_SendData( USART1,(u8)c );	// ·¢ËÍµ¥×Ö½ÚÊı¾İ
-	while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);	//µÈ´ı·¢ËÍÍê±Ï 
+	(void)fp;
 
-	return (c); //·µ»Ø×Ö·û
+	USART_SendData( USART1, (u8)c );					// ·¢ËÍµ¥×Ö½ÚÊı¾İ
+	while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);	// µÈ´ı·¢ËÍÍê±Ï
+
+	if (locked)
+	{
+		xSemaphoreGive(s_dbgMutex);
+	}
+
+	return (c);	// ·µ»Ø×Ö·û
 }
 
 

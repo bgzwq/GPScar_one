@@ -336,7 +336,7 @@ void GPS_Init(void)
 	USART_ITConfig(GPS_USART, USART_IT_IDLE, ENABLE);
 
 	NVIC_InitStructure.NVIC_IRQChannel = GPS_IRQn;
-	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 2;
+	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 6;
 	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 2;
 	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
 	NVIC_Init(&NVIC_InitStructure);

@@ -55,7 +55,7 @@ static uint8_t s_mpuReady = 0;
 void BSP_Init(void)
 {
     /* ---- 1. time base -------------------------------------------------- */
-    Delay_Init();           /* SysTick millisecond delay                    */
+    Delay_Init();           /* TIM2 us time base (SysTick belongs to RTOS)  */
     Timer_Init();           /* TIM2 microsecond time base                   */
 
     /* ---- 2. debug and communication ------------------------------------ */

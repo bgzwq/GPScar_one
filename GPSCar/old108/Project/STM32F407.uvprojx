@@ -336,7 +336,7 @@
               <MiscControls></MiscControls>
               <Define>USE_STDPERIPH_DRIVER,STM32F40_41xxx,ARM_MATH_CM4,</Define>
               <Undefine></Undefine>
-              <IncludePath>..\STM32\CMSIS\Device\ST\STM32F4xx\Include;..\STM32\CMSIS\Include;..\STM32\STM32F4xx_StdPeriph_Driver\inc;..\MY;..\Drive\Include;..\Program\Include;..\Mid\Inc;..\BSP\Inc;..\FatFs;..\RTOS</IncludePath>
+              <IncludePath>..\STM32\CMSIS\Device\ST\STM32F4xx\Include;..\STM32\CMSIS\Include;..\STM32\STM32F4xx_StdPeriph_Driver\inc;..\MY;..\Drive\Include;..\Program\Include;..\Mid\Inc;..\BSP\Inc;..\FatFs;..\RTOS;..\RTOS\include;..\RTOS\port\MemMang;..\RTOS\port\RVDS\ARM_CM4F;..\RTOS\src</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -394,6 +394,11 @@
               <FileName>stm32f4xx_conf.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\MY\stm32f4xx_conf.h</FilePath>
+            </File>
+            <File>
+              <FileName>FreeRTOSConfig.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\MY\FreeRTOSConfig.h</FilePath>
             </File>
           </Files>
         </Group>
@@ -814,6 +819,91 @@
               <FileName>bsp.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\BSP\Inc\bsp.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>RTOS/src</GroupName>
+          <Files>
+            <File>
+              <FileName>croutine.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\RTOS\src\croutine.c</FilePath>
+            </File>
+            <File>
+              <FileName>event_groups.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\RTOS\src\event_groups.c</FilePath>
+            </File>
+            <File>
+              <FileName>list.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\RTOS\src\list.c</FilePath>
+            </File>
+            <File>
+              <FileName>queue.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\RTOS\src\queue.c</FilePath>
+            </File>
+            <File>
+              <FileName>tasks.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\RTOS\src\tasks.c</FilePath>
+            </File>
+            <File>
+              <FileName>timers.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\RTOS\src\timers.c</FilePath>
+            </File>
+            <File>
+              <FileName>croutine.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\RTOS\include\croutine.h</FilePath>
+            </File>
+            <File>
+              <FileName>event_groups.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\RTOS\include\event_groups.h</FilePath>
+            </File>
+            <File>
+              <FileName>FreeRTOS.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\RTOS\include\FreeRTOS.h</FilePath>
+            </File>
+            <File>
+              <FileName>list.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\RTOS\include\list.h</FilePath>
+            </File>
+            <File>
+              <FileName>queue.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\RTOS\include\queue.h</FilePath>
+            </File>
+            <File>
+              <FileName>task.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\RTOS\include\task.h</FilePath>
+            </File>
+            <File>
+              <FileName>timers.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\RTOS\include\timers.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>RTOS/port</GroupName>
+          <Files>
+            <File>
+              <FileName>port.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\RTOS\port\RVDS\ARM_CM4F\port.c</FilePath>
+            </File>
+            <File>
+              <FileName>heap_4.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\RTOS\port\MemMang\heap_4.c</FilePath>
             </File>
           </Files>
         </Group>

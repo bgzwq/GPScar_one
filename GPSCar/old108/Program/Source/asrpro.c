@@ -67,7 +67,7 @@ void ASR_Init(void)
 	USART_ITConfig(ASR_USART, USART_IT_RXNE, ENABLE);
 
 	NVIC_InitStructure.NVIC_IRQChannel = ASR_IRQn;
-	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 1;
+	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 5;
 	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 2;
 	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
 	NVIC_Init(&NVIC_InitStructure);

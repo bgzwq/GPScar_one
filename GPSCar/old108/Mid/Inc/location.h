@@ -88,7 +88,12 @@ typedef struct
 	LocationSrc_TypeDef source;	// 定位来源
 	uint32_t lastGpsMs;			// 最后一次GPS有效的系统毫秒戳, 0=从未定位
 	uint32_t fixSeq;			// 定位更新序号, 每次采纳新GPS位置+1(轨迹记录用它判新帧)
+	// float speed_sengle;//速度方向
+	// float speed_x;//速度x分量
+	// float speed_y;
+	// float sign[2];
 } Location_DataTypeDef;
+
 
 /*---------------------- 函数声明 ----------------------------*/
 

@@ -28,6 +28,8 @@
 
 #include "menu.h"
 #include <stdio.h>
+#include "FreeRTOS.h"
+#include "task.h"
 #include "delay.h"
 #include "timer.h"
 #include "lcd_spi_154.h"
@@ -44,21 +46,32 @@
 #include "navlog.h"
 #include "mapview.h"
 #include "K230.h"
+#include "uart_host.h"
+#include "lidar.h"
+#include "estop.h"
+#include "map_collent.h"
+#include "lanyacon.h"
+#include "ff.h"
 
 
 /* LCD/串口用的模式名(定宽6字符, 防止刷新残留) */
-static const char *s_modeName[MODE_NUM] = { "MANUAL", "AVOID ", "RADAR ", "VISION" };
+static const char *s_modeName[MODE_NUM] =
+{ "IDLE  ", "MANUAL", "PATROL", "SCAN  ", "APPRCH", "ALIGN ", "WAIT  ", "UNLOAD",
+  "CHECK ", "RETURN", "ESTOP ", "AVOID ", "RADAR ", "VISION" };
 
 /*---------------------- 分页定义 ----------------------------*/
 typedef enum
 {
 	PAGE_OVERVIEW = 0,	// 概览
+	PAGE_COMM,
 	PAGE_MOTOR,			// 电机
 	PAGE_SENSOR,		// 传感器
 	PAGE_MPU,			// MPU6050姿态
 	PAGE_GPS,			// GPS融合定位
 	PAGE_IO,			// 按键/LED状态
-	PAGE_MAP,			// 轨迹地图
+	PAGE_MAP,			// 拓扑与轨迹地图
+	PAGE_TF,
+	PAGE_DEBUG,
 	PAGE_NUM
 } MenuPage_TypeDef;
 
@@ -70,7 +83,7 @@ static uint32_t    s_mapMsgUntil = 0;
 
 /* 页名(定宽4字符) */
 static const char *s_pageName[PAGE_NUM] =
-{ "OVER", "MOTR", "SENS", "MPU ", "GPS ", "IO  ", "MAP " };
+{ "HOME", "ESP ", "MOTR", "SENS", "MPU ", "GPS ", "IO  ", "MAP ", "TF  ", "DBG " };
 
 /* 电机方向脚查找表(与motor.h一致), 用于回读实际电平 */
 static const struct { GPIO_TypeDef *port; uint16_t pin; } s_motorDirPin[4][2] =
@@ -85,12 +98,15 @@ static const struct { GPIO_TypeDef *port; uint16_t pin; } s_motorDirPin[4][2] =
 static void Menu_SelfTestStart(void);
 static void Menu_SelfTestTick(void);
 static void Menu_PageOverview(void);
+static void Menu_PageComm(void);
+static void Menu_PageDebug(void);
 static void Menu_PageMotor(void);
 static void Menu_PageSensor(void);
 static void Menu_PageMpu(void);
 static void Menu_PageGps(void);
 static void Menu_PageIO(void);
 static void Menu_PageMap(void);
+static void Menu_PageTf(void);
 
 
 /*************************************************************************************************
@@ -126,8 +142,6 @@ void Menu_SplashScreen(void)
 	Buzzer_Beep(2000, 80);	// 开机提示音
 	Delay_ms(800);
 
-	LCD_SetBackColor(LCD_BLACK);
-	LCD_Clear();
 }
 
 /*************************************************************************************************
@@ -197,6 +211,7 @@ void Menu_KeyProcess(void)
 
 			case CAR_KEY4:	// 地图页: 保存地图; 其它页: 电机自检
 				if (s_page == PAGE_MAP) Menu_MapSave();
+				else if (s_page == PAGE_TF) { NavLog_Sync(); Buzzer_BeepAsync(2400, 50); }
 				else                    Menu_SelfTestStart();
 				break;
 
@@ -221,7 +236,7 @@ void Menu_Refresh(void)
 	LCD_DisplayString(4, 0, "SmartCar");
 	LCD_DisplayNumber(76, 0, s_page + 1, 1);
 	LCD_DisplayString(84, 0, "/");
-	LCD_DisplayNumber(92, 0, PAGE_NUM, 1);
+	LCD_DisplayNumber(92, 0, PAGE_NUM, 2);
 	LCD_SetColor(LIGHT_GREEN);
 	LCD_DisplayString(108, 0, (char *)s_pageName[s_page]);
 	LCD_SetColor(LCD_YELLOW);
@@ -231,12 +246,15 @@ void Menu_Refresh(void)
 	switch (s_page)
 	{
 		case PAGE_OVERVIEW: Menu_PageOverview(); break;
+		case PAGE_COMM:     Menu_PageComm(); break;
 		case PAGE_MOTOR:    Menu_PageMotor();    break;
 		case PAGE_SENSOR:   Menu_PageSensor();   break;
 		case PAGE_MPU:      Menu_PageMpu();      break;
 		case PAGE_GPS:      Menu_PageGps();      break;
 		case PAGE_IO:       Menu_PageIO();       break;
 		case PAGE_MAP:      Menu_PageMap();      break;
+		case PAGE_TF:       Menu_PageTf();       break;
+		case PAGE_DEBUG:    Menu_PageDebug();    break;
 		default:            s_page = PAGE_OVERVIEW; break;
 	}
 
@@ -251,7 +269,8 @@ void Menu_Refresh(void)
 	/* 页脚: 按键提示 */
 	LCD_SetColor(LIGHT_GREY);
 	LCD_SetAsciiFont(&ASCII_Font12);
-	LCD_DisplayString(4, 226, "K1:Prev K2:Next K3:Mode K4:Test");
+	LCD_DisplayString(4, 226, s_page == PAGE_TF ? "K1/2:Page K3:Mode K4:Sync" :
+		                     "K1:Prev K2:Next K3:Mode K4:Test");
 }
 
 /*************************************************************************************************
@@ -269,10 +288,11 @@ void Menu_MapSave(void)
 	LCD_SetColor(LIGHT_YELLOW);
 	LCD_DisplayString(4, 212, "Saving map to SD...");
 
+	map_write_SD(0, "0:/CARMAP/MAP.BIN");
 	if (MapView_SaveToSd())
 	{
 		Buzzer_BeepAsync(3000, 80);
-		s_mapMsg = "Saved CARLOG/MAP.BMP";
+		s_mapMsg = "Saved BMP + MAP.BIN";
 	}
 	else
 	{
@@ -282,6 +302,82 @@ void Menu_MapSave(void)
 	s_mapMsgUntil = Get_Ms() + 3000;
 }
 
+
+static void Menu_PageComm(void)
+{
+    UARTHost_Status_TypeDef *host = UARTHost_GetStatus();
+    LCD_SetAsciiFont(&ASCII_Font16);
+    LCD_SetColor(LIGHT_CYAN);
+    LCD_DisplayString(4, 24, "ESP32  UART2  115200");
+    LCD_DisplayString(4, 46, "RX lines:"); LCD_DisplayNumber(84, 46, host->rxLines, 6);
+    LCD_DisplayString(4, 66, "TX telemetry:"); LCD_DisplayNumber(116, 66, host->txTelemetry, 6);
+    LCD_DisplayString(4, 86, "Commands:"); LCD_DisplayNumber(84, 86, host->rxCommands, 5);
+    LCD_DisplayString(140, 86, "Err:"); LCD_DisplayNumber(180, 86, host->rxErrors, 4);
+    LCD_SetColor(LIGHT_YELLOW);
+    LCD_DisplayString(4, 112, "Last RX:");
+    LCD_SetAsciiFont(&ASCII_Font12);
+    LCD_SetColor(LCD_WHITE);
+    LCD_DisplayString(4, 132, host->lastRx[0] ? host->lastRx : "(none)");
+    LCD_SetColor(LIGHT_YELLOW);
+    LCD_DisplayString(4, 152, "Last TX:");
+    LCD_SetColor(LCD_WHITE);
+    LCD_DisplayString(4, 172, host->lastTx[0] ? host->lastTx : "(none)");
+    LCD_SetColor(LIGHT_GREY);
+    LCD_DisplayString(4, 198, "BT / WiFi / voice -> Command_Exec");
+}
+
+static void Menu_PageTf(void)
+{
+    FILINFO info;
+    DWORD freeClusters;
+    FATFS *fs;
+    uint32_t freeMb = 0;
+    uint32_t csvSize = 0, bmpSize = 0, mapSize = 0;
+    if (NavLog_IsSdOk())
+    {
+        if (f_stat(NAVLOG_CSV_PATH, &info) == FR_OK) csvSize = (uint32_t)info.fsize;
+        if (f_stat(NAVLOG_BMP_PATH, &info) == FR_OK) bmpSize = (uint32_t)info.fsize;
+        if (f_stat("0:/CARMAP/MAP.BIN", &info) == FR_OK) mapSize = (uint32_t)info.fsize;
+        if (f_getfree("0:", &freeClusters, &fs) == FR_OK)
+            freeMb = (uint32_t)(freeClusters * fs->csize / 2048);
+    }
+    LCD_SetAsciiFont(&ASCII_Font16);
+    LCD_SetColor(NavLog_IsSdOk() ? LIGHT_GREEN : LIGHT_RED);
+    LCD_DisplayString(4, 24, "TF card:"); LCD_DisplayString(84, 24, (char *)NavLog_GetStateName());
+    LCD_SetColor(LCD_WHITE);
+    LCD_DisplayString(4, 50, "Free:"); LCD_DisplayNumber(60, 50, freeMb, 5); LCD_DisplayString(116, 50, "MB");
+    LCD_DisplayString(4, 74, "TRACK.CSV:"); LCD_DisplayNumber(100, 74, csvSize, 8);
+    LCD_DisplayString(4, 96, "MAP.BMP  :"); LCD_DisplayNumber(100, 96, bmpSize, 8);
+    LCD_DisplayString(4, 118, "MAP.BIN  :"); LCD_DisplayNumber(100, 118, mapSize, 8);
+    LCD_SetColor(LIGHT_CYAN);
+    LCD_DisplayString(4, 146, "Track points:"); LCD_DisplayNumber(116, 146, NavLog_GetCount(), 5);
+    LCD_DisplayString(4, 168, "Rejected:"); LCD_DisplayNumber(84, 168, NavLog_GetRejectCount(), 5);
+    LCD_DisplayString(4, 190, "Distance:"); LCD_DisplayDecimals(84, 190, NavLog_GetDistanceM(), 6, 1);
+}
+
+static void Menu_PageDebug(void)
+{
+    Lidar_DataTypeDef *lidar = Lidar_GetData();
+    LCD_SetAsciiFont(&ASCII_Font16);
+    LCD_SetColor(LIGHT_GREEN);
+    LCD_DisplayString(4, 24, "Heap:"); LCD_DisplayNumber(60, 24, xPortGetFreeHeapSize(), 6);
+    LCD_DisplayString(140, 24, "B");
+    LCD_DisplayString(4, 44, "Min :"); LCD_DisplayNumber(60, 44, xPortGetMinimumEverFreeHeapSize(), 6);
+    LCD_DisplayString(140, 44, "B");
+    LCD_DisplayString(4, 68, "UI stack min:"); LCD_DisplayNumber(116, 68, uxTaskGetStackHighWaterMark(NULL), 4);
+    LCD_SetColor(LIGHT_CYAN);
+    LCD_DisplayString(4, 92, "LD19:"); LCD_DisplayString(60, 92, lidar->online ? "ON " : "OFF");
+    LCD_DisplayString(120, 92, "RPM:"); LCD_DisplayNumber(164, 92, lidar->speed / 60, 4);
+    LCD_DisplayString(4, 112, "Pkt:"); LCD_DisplayNumber(52, 112, lidar->packets, 7);
+    LCD_DisplayString(4, 132, "CRC:"); LCD_DisplayNumber(52, 132, lidar->crcErrors, 6);
+    LCD_SetColor(LIGHT_YELLOW);
+    LCD_DisplayString(4, 156, "Nodes:"); LCD_DisplayNumber(68, 156, MapCollent_GetCount(), 3);
+    LCD_DisplayString(120, 156, "E:"); LCD_DisplayNumber(144, 156, Estop_GetSource(), 3);
+    LCD_DisplayString(4, 176, "E-stop count:"); LCD_DisplayNumber(116, 176, Estop_GetCount(), 5);
+    LCD_SetColor(LIGHT_GREY);
+    LCD_DisplayString(4, 200, "Reset only by ESP cmd or K3");
+}
+
 /*---------------------- 各页面绘制 ---------------------------*/
 
 /*************************************************************************************************
@@ -289,43 +385,32 @@ void Menu_MapSave(void)
 *************************************************************************************************/
 static void Menu_PageOverview(void)
 {
-	Location_DataTypeDef *loc = Location_GetData();
-
-	LCD_SetAsciiFont(&ASCII_Font16);
-	LCD_SetColor(LCD_WHITE);
-
-	/* 目标速度 + 闭环状态 */
-	LCD_DisplayString(4, 24, "Target:"); LCD_DisplayNumber(70, 24, g_speed, 4);
-	LCD_DisplayString(140, 24, "Run:");
-	LCD_DisplayString(180, 24, Car_IsRunning() ? "YES" : "NO ");
-
-	/* 轮速反馈 */
-	LCD_DisplayString(4, 44, "W1:"); LCD_DisplayNumber(40, 44, Car_GetSpeed(0), 4);
-	LCD_DisplayString(120, 44, "W2:"); LCD_DisplayNumber(156, 44, Car_GetSpeed(1), 4);
-	LCD_DisplayString(4, 64, "W3:"); LCD_DisplayNumber(40, 64, Car_GetSpeed(2), 4);
-	LCD_DisplayString(120, 64, "W4:"); LCD_DisplayNumber(156, 64, Car_GetSpeed(3), 4);
-
-	/* 电源电压 */
-	LCD_SetColor(LIGHT_GREEN);
-	LCD_DisplayString(4, 88, "PWR1:"); LCD_DisplayDecimals(56, 88, SensorADC_GetVoltage(ADC_CH_POWER1), 4, 2);
-	LCD_DisplayString(120, 88, "PWR2:"); LCD_DisplayDecimals(172, 88, SensorADC_GetVoltage(ADC_CH_POWER2), 4, 2);
-
-	/* 距离与舵机 */
-	LCD_SetColor(LIGHT_CYAN);
-	LCD_DisplayString(4, 112, "DistF:"); LCD_DisplayNumber(64, 112, (int32_t)g_distFixed, 4);
-	LCD_DisplayString(120, 112, "Servo:"); LCD_DisplayNumber(180, 112, (int32_t)g_servoAngle, 3);
-
-	/* 定位概览 */
-	LCD_SetColor(LIGHT_YELLOW);
-	LCD_DisplayString(4, 136, "GPS:"); LCD_DisplayString(44, 136, (char *)Location_GetSourceName());
-	LCD_DisplayString(120, 136, "Sats:"); LCD_DisplayNumber(172, 136, loc->satellites, 2);
-	LCD_DisplayString(4, 156, "Spd:"); LCD_DisplayDecimals(44, 156, loc->speedKmh, 5, 1);
-	LCD_DisplayString(120, 156, "km/h");
+    Location_DataTypeDef *loc = Location_GetData();
+    uint16_t front = Lidar_GetMinDistance(0, 20);
+    LCD_SetAsciiFont(&ASCII_Font20);
+    LCD_SetColor(LCD_CYAN);
+    LCD_DisplayString(4, 24, "Smart Picking Car");
+    LCD_SetAsciiFont(&ASCII_Font16);
+    LCD_SetColor(Estop_IsActive() ? LIGHT_RED : LIGHT_GREEN);
+    LCD_DisplayString(4, 52, Estop_IsActive() ? "STATUS: ESTOP" : "STATUS: READY");
+    LCD_SetColor(LCD_WHITE);
+    LCD_DisplayString(4, 76, "Mode:"); LCD_DisplayString(52, 76, (char *)Menu_GetModeName());
+    LCD_DisplayString(140, 76, "Run:"); LCD_DisplayString(180, 76, Car_IsRunning() ? "YES" : "NO ");
+    LCD_DisplayString(4, 98, "Speed:"); LCD_DisplayNumber(60, 98, g_speed, 3);
+    LCD_DisplayString(100, 98, "Basket:"); LCD_DisplayNumber(164, 98, g_basket, 3);
+    LCD_SetColor(LIGHT_GREEN);
+    LCD_DisplayString(4, 122, "Power:"); LCD_DisplayDecimals(60, 122, SensorADC_GetVoltage(ADC_CH_POWER1), 5, 2);
+    LCD_DisplayString(140, 122, "V");
+    LCD_SetColor(LIGHT_CYAN);
+    LCD_DisplayString(4, 144, "Front:"); LCD_DisplayNumber(60, 144, front / 10, 4);
+    LCD_DisplayString(100, 144, "cm  Ultra:"); LCD_DisplayNumber(172, 144, (int32_t)g_distFixed, 4);
+    LCD_SetColor(LIGHT_YELLOW);
+    LCD_DisplayString(4, 170, "GPS:"); LCD_DisplayString(44, 170, (char *)Location_GetSourceName());
+    LCD_DisplayString(100, 170, "Sat:"); LCD_DisplayNumber(140, 170, loc->satellites, 2);
+    LCD_DisplayString(4, 192, "ESP:"); LCD_DisplayNumber(44, 192, UARTHost_GetStatus()->rxLines, 5);
+    LCD_DisplayString(100, 192, "Map:"); LCD_DisplayNumber(140, 192, MapCollent_GetCount(), 3);
 }
 
-/*************************************************************************************************
-*	页2 电机: 每电机 目标/反馈/占空比 + 方向脚电平 + 编码器累计
-*************************************************************************************************/
 static void Menu_PageMotor(void)
 {
 	uint8_t i;

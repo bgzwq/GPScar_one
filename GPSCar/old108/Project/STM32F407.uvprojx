@@ -701,6 +701,36 @@
           <GroupName>program</GroupName>
           <Files>
             <File>
+              <FileName>uart_host.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../Program/Include/uart_host.h</FilePath>
+            </File>
+            <File>
+              <FileName>uart_host.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Program/Source/uart_host.c</FilePath>
+            </File>
+            <File>
+              <FileName>estop.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../Program/Include/estop.h</FilePath>
+            </File>
+            <File>
+              <FileName>estop.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Program/Source/estop.c</FilePath>
+            </File>
+            <File>
+              <FileName>lidar.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../Program/Include/lidar.h</FilePath>
+            </File>
+            <File>
+              <FileName>lidar.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Program/Source/lidar.c</FilePath>
+            </File>
+            <File>
               <FileName>car.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Program\Source\car.c</FilePath>
@@ -729,16 +759,6 @@
               <FileName>bluetooth.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\Program\Include\bluetooth.h</FilePath>
-            </File>
-            <File>
-              <FileName>asrpro.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Program\Source\asrpro.c</FilePath>
-            </File>
-            <File>
-              <FileName>asrpro.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\Program\Include\asrpro.h</FilePath>
             </File>
             <File>
               <FileName>K230.c</FileName>
@@ -804,6 +824,16 @@
               <FileName>menu.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\Mid\Inc\menu.h</FilePath>
+            </File>
+            <File>
+              <FileName>map_collent.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Mid\Inc\map_collent.h</FilePath>
+            </File>
+            <File>
+              <FileName>map_collent.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Mid\Src\map_collent.c</FilePath>
             </File>
           </Files>
         </Group>

@@ -8,7 +8,7 @@
  * USART2: TX=PD5, RX=PD6, ������WiFiģ�鹲�ô˴���
  * Ĭ�ϲ����� 115200, �����·����޸���ƥ��ģ��
  */
-#define BT_BaudRate			9600
+#define BT_BaudRate			115200
 
 #define BT_USART			USART2
 #define BT_USART_CLK		RCC_APB1Periph_USART2

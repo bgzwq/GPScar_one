@@ -24,6 +24,7 @@
 #include "lcd_spi_154.h"
 #include "navlog.h"
 #include "location.h"
+#include "map_collent.h"
 
 /*---------------------- 位图缓冲 ----------------------------*/
 #define MAP_BMP_ROWBYTES	(((MAP_AREA_W) + 7) / 8)
@@ -50,6 +51,7 @@ static float   s_gridM = 10.0f;			// 当前网格间距(m)
 static uint8_t  s_wasVisible = 0;		// 上一拍地图页是否可见
 static uint8_t  s_forceRedraw = 1;		// 强制重绘标志
 static uint32_t s_drawnCount = 0xFFFFFFFF;
+static uint16_t s_drawnNodes = 0xFFFF;
 static int32_t  s_drawnLatE7 = 0;
 static int32_t  s_drawnLonE7 = 0;
 
@@ -119,7 +121,7 @@ static void MapView_RecalcFit(void)
 		s_orgLatE7 = pts[0].latE7;
 		s_orgLonE7 = pts[0].lonE7;
 	}
-	else
+	else if (MapCollent_GetCount() == 0)
 	{
 		Location_DataTypeDef *loc = Location_GetData();
 		s_orgLatE7 = loc->latE7;
@@ -137,6 +139,23 @@ static void MapView_RecalcFit(void)
 		Location_E7ToLocalM(s_orgLatE7, s_orgLonE7, pts[i].latE7, pts[i].lonE7, &n, &e);
 
 		if (i == 0) { nMin = nMax = n; eMin = eMax = e; }
+		else
+		{
+			if (n < nMin) nMin = n;
+			if (n > nMax) nMax = n;
+			if (e < eMin) eMin = e;
+			if (e > eMax) eMax = e;
+		}
+		lastN = n;
+		lastE = e;
+	}
+
+	for (i = 0; i < MapCollent_GetCount(); i++)
+	{
+		minimap *node = MapCollent_GetByIndex(i);
+		n = node->y / 100.0f;
+		e = node->x / 100.0f;
+		if (cnt == 0 && i == 0) { nMin = nMax = n; eMin = eMax = e; }
 		else
 		{
 			if (n < nMin) nMin = n;
@@ -166,7 +185,7 @@ static void MapView_RecalcFit(void)
 	s_scale = s_baseScale * s_zoom;
 
 	/* 放大查看时以当前位置为中心, 否则以整条轨迹的包围盒中心为中心 */
-	if (s_zoom > 1.001f || cnt == 1)
+	if (s_zoom > 1.001f || cnt + MapCollent_GetCount() == 1)
 	{
 		s_cx = lastE;
 		s_cy = lastN;
@@ -316,6 +335,35 @@ static void MapView_DrawScaleBar(uint8_t toBmp)
 
 /*---------------------- LCD绘制 ----------------------------*/
 
+static void MapView_DrawTopology(void)
+{
+    uint16_t i;
+    for (i = 0; i < MapCollent_GetCount(); i++)
+    {
+        minimap *node = MapCollent_GetByIndex(i);
+        minimap *links[2];
+        int x, y, j;
+        links[0] = node->E;
+        links[1] = node->N;
+        MapView_ProjectM(node->y / 100.0f, node->x / 100.0f, &x, &y);
+        s_lineColor = 0x808080;
+        for (j = 0; j < 2; j++)
+        {
+            int tx, ty;
+            if (!links[j]) continue;
+            MapView_ProjectM(links[j]->y / 100.0f, links[j]->x / 100.0f, &tx, &ty);
+            MapView_LineLcd(x, y, tx, ty);
+        }
+        if (!MapView_InArea(x, y)) continue;
+        s_lineColor = node->type == MAP_PARK ? 0x00FFFF :
+                      node->type == MAP_UNLOAD ? 0xFFFF00 :
+                      node->type == MAP_INSPECT ? 0xFF00FF :
+                      node->type == MAP_TARGET ? 0xFF4040 : 0xFFFFFF;
+        MapView_LineLcd(x - 2, y, x + 2, y);
+        MapView_LineLcd(x, y - 2, x, y + 2);
+    }
+}
+
 static void MapView_DrawLcd(void)
 {
 	const NavPoint_TypeDef *pts = NavLog_GetPoints();
@@ -343,6 +391,8 @@ static void MapView_DrawLcd(void)
 		py = ay;
 		havePrev = 1;
 	}
+
+	MapView_DrawTopology();
 
 	/* 指北箭头 + 比例尺 */
 	s_lineColor = LIGHT_CYAN;
@@ -510,7 +560,8 @@ void MapView_Refresh(uint8_t visible)
 	                    !s_wasVisible ||
 	                    cnt != s_drawnCount ||
 	                    lastLat != s_drawnLatE7 ||
-	                    lastLon != s_drawnLonE7);
+	                    lastLon != s_drawnLonE7 ||
+                    MapCollent_GetCount() != s_drawnNodes);
 
 	if (!changed) return;
 
@@ -520,6 +571,7 @@ void MapView_Refresh(uint8_t visible)
 	s_drawnCount  = cnt;
 	s_drawnLatE7  = lastLat;
 	s_drawnLonE7  = lastLon;
+	s_drawnNodes  = MapCollent_GetCount();
 	s_wasVisible  = 1;
 	s_forceRedraw = 0;
 }

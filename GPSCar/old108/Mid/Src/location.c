@@ -449,3 +449,5 @@ float Location_E7DistanceM(int32_t lat1E7, int32_t lon1E7,
 	Location_E7ToLocalM(lat1E7, lon1E7, lat2E7, lon2E7, &dN, &dE);
 	return sqrtf(dN * dN + dE * dE);
 }
+
+

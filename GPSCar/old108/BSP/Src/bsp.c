@@ -22,7 +22,9 @@
 
 #include "K230.h"
 #include "bluetooth.h"
-#include "asrpro.h"
+#include "lidar.h"
+#include "estop.h"
+#include "uart_host.h"
 #include "car.h"
 
 #include "sensor_adc.h"
@@ -38,6 +40,7 @@
 #include "location.h"
 #include "navlog.h"
 #include "mapview.h"
+#include "map_collent.h"
 
 /* Result of the MPU6050 probe, kept inside BSP so this file does not depend
  * on application globals. The application reads it through BSP_IsMpuReady(). */
@@ -62,10 +65,12 @@ void BSP_Init(void)
     LED_Init();             /* on-board LED (PC13)                          */
     Usart_Config();         /* USART1 debug console (PA9/PA10)              */
     K230_Init();            /* USART1 RX for K230 vision frames             */
-    BT_Init();              /* USART2 Bluetooth / WiFi (PD5/PD6)            */
-    ASR_Init();             /* USART3 ASRPRO voice module (PD8/PD9)         */
+    BT_Init();              /* USART2 ESP32: Bluetooth / WiFi / voice       */
+    UARTHost_Init();
+    Lidar_Init();           /* USART3 LD19 lidar (PD8/PD9)                  */
 
     /* ---- 3. chassis and sensors ---------------------------------------- */
+    Estop_Init();           /* PE0 emergency input + PB1 motor STBY         */
     Car_Init();             /* motor PWM + encoders                         */
     SensorADC_Init();       /* power / brightness / humidity ADC            */
     Servo_Init();           /* servo (PB14)                                 */
@@ -81,7 +86,8 @@ void BSP_Init(void)
     Location_Init();        /* fusion positioning, needs ~0.6 s still time  */
 
     NavLog_Init();          /* mount SD and open 0:/CARLOG/TRACK.CSV        */
-    MapView_Init();         /* track map view                               */
+    MapView_Init();         /* track + topology map view                    */
+    MapCollent_Init();      /* 200 semantic nodes + one 64x64 local grid    */
 }
 
 /**

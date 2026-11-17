@@ -1,0 +1,4 @@
+#FILE Mid/Src/menu.c
+#ENC gbk
+#OP@709 repl 2 Car_TestLock(0);
+static SelfTestState_TypeDef s_testState = ST_IDLE;

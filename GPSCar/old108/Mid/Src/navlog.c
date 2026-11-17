@@ -21,6 +21,8 @@
 ***/
 
 #include "navlog.h"
+#include "mapview.h"
+#include "map_collent.h"
 #include <stdio.h>
 #include <string.h>
 #include "ff.h"
@@ -45,6 +47,12 @@ static uint8_t  s_rejectRun = 0;					// 连续被过滤次数
 static uint32_t s_sinceSync = 0;					// 距上次f_sync写入的点数
 static float    s_totalM   = 0;						// 轨迹累计长度(m)
 static uint32_t s_csvRows  = 0;						// CSV累计行号(跨上电续写, 这里只统计本次)
+/* ---- 跨任务的作业请求与状态快照: UiTask 只写这几个标志, LogTask 负责执行 ---- */
+static volatile uint8_t s_saveReq;		// 1=请求保存地图(BMP + MAP.BIN)
+static volatile uint8_t s_infoReq;		// 1=请求刷新SD信息快照
+static volatile uint8_t s_clearReq;		// 1=请求清空RAM轨迹
+static volatile uint8_t s_syncReq;		// 1=请求CSV刷盘
+static NavLog_Info_TypeDef s_info;		// 状态快照(NavLog_Service 写, 其它任务只读)
 
 static uint8_t  s_bmpRow[NAVLOG_BMP_MAX_W * 3];		// BMP行缓冲(静态, 避免占用栈)
 
@@ -241,6 +249,9 @@ void NavLog_Update(uint32_t now)
 		if (s_count >= 2) s_totalM += d;
 	}
 	s_lastPtMs = now;
+	s_info.points    = s_count;
+	s_info.rejected  = s_reject;
+	s_info.distanceM = s_totalM;
 
 	/* --- 追加CSV(没有SD卡就只留在RAM里) --- */
 	if (!s_sdOk) return;
@@ -332,15 +343,16 @@ float NavLog_GetDistanceM(void)
 
 void NavLog_Clear(void)
 {
-	s_count     = 0;
-	s_totalM    = 0.0f;
-	s_rejectRun = 0;
-	s_lastPtMs  = 0;
+	/* 只挂请求: 真正清空在 LogTask 的 NavLog_Service() 里做,
+	 * 否则 UiTask 清 s_count 的同时 LogTask 正在追加点, 会写出错点/越界。 */
+	s_clearReq = 1;
 }
+
 
 void NavLog_Sync(void)
 {
-	if (s_sdOk) f_sync(&s_csv);
+	/* 只挂请求: 真正的 f_sync 在 LogTask 里做(见 navlog.h 的说明) */
+	s_syncReq = 1;
 }
 
 /*---------------------- BMP导出 ----------------------------*/
@@ -449,4 +461,124 @@ uint8_t NavLog_WriteBmp1bpp(const uint8_t *bits, uint16_t w, uint16_t h,
 	printf("[NAV] map saved: %s (%lux%u, %lu bytes)\r\n",
 	       NAVLOG_BMP_PATH, (unsigned long)w, (unsigned)h, (unsigned long)fileSize);
 	return 1;
+}
+/*---------------------- 跨任务作业 / 状态快照实现 ----------------------------*/
+
+/*************************************************************************************************
+*	函 数 名:	NavLog_RefreshInfo
+*
+*	函数功能:	刷新 SD/文件状态快照(f_stat/f_getfree 都在这里, 只在 LogTask 调用)
+*
+*************************************************************************************************/
+static void NavLog_RefreshInfo(uint32_t now)
+{
+	FILINFO fno;
+	DWORD   freeClusters = 0;
+	FATFS  *fs = 0;
+
+	s_info.sdOk      = s_sdOk;
+	s_info.points    = s_count;
+	s_info.rejected  = s_reject;
+	s_info.distanceM = s_totalM;
+	s_info.freeMb    = 0;
+	s_info.csvSize   = 0;
+	s_info.bmpSize   = 0;
+	s_info.mapSize   = 0;
+
+	if (s_sdOk)
+	{
+		if (f_stat((char *)NAVLOG_CSV_PATH, &fno) == FR_OK) s_info.csvSize = (uint32_t)fno.fsize;
+		if (f_stat((char *)NAVLOG_BMP_PATH, &fno) == FR_OK) s_info.bmpSize = (uint32_t)fno.fsize;
+		if (f_stat("0:/CARMAP/MAP.BIN", &fno) == FR_OK)     s_info.mapSize = (uint32_t)fno.fsize;
+		if (f_getfree("0:", &freeClusters, &fs) == FR_OK && fs != 0)
+			s_info.freeMb = (uint32_t)(freeClusters * fs->csize / 2048);
+	}
+	s_info.infoMs = now;
+}
+
+/*************************************************************************************************
+*	函 数 名:	NavLog_DoSaveMap
+*
+*	函数功能:	保存地图(BMP + 拓扑 MAP.BIN) —— 只在 LogTask 里执行
+*
+*************************************************************************************************/
+static void NavLog_DoSaveMap(void)
+{
+	uint8_t okBmp, okMap;
+
+	s_info.saveBusy = 1;
+	okMap = map_write_SD(0, "0:/CARMAP/MAP.BIN") ? 1 : 0;
+	okBmp = MapView_SaveToSd() ? 1 : 0;
+	s_info.saveResult = (okBmp && okMap) ? 1 : 2;
+	s_info.saveMs     = Get_Ms();
+	s_info.saveBusy   = 0;
+	printf("[NAV] save map: bmp=%u bin=%u\r\n", (unsigned)okBmp, (unsigned)okMap);
+}
+
+/*************************************************************************************************
+*	函 数 名:	NavLog_RequestSaveMap / NavLog_RequestSdInfo / NavLog_GetInfo
+*
+*	函数功能:	【供任意任务调用】挂作业请求 / 读状态快照, 都不碰 FatFs
+*
+*************************************************************************************************/
+void NavLog_RequestSaveMap(void)
+{
+	s_saveReq = 1;
+}
+
+void NavLog_RequestSdInfo(void)
+{
+	s_infoReq = 1;
+}
+
+const NavLog_Info_TypeDef *NavLog_GetInfo(void)
+{
+	return &s_info;
+}
+
+/*************************************************************************************************
+*	函 数 名:	NavLog_Service
+*
+*	函数功能:	【只在 LogTask 里调用】执行其它任务挂过来的作业 + 刷新状态快照
+*
+*	说    明:	这是全工程唯一"由用户动作触发"的 FatFs 调用点(轨迹记录仍在
+*				NavLog_Update 里, 同一个任务), 从而彻底消除两个任务同时用卡。
+*
+*************************************************************************************************/
+void NavLog_Service(void)
+{
+	uint32_t now = Get_Ms();
+
+	/* 1) 清空RAM轨迹(KEY4 长按) */
+	if (s_clearReq)
+	{
+		s_clearReq  = 0;
+		s_count     = 0;
+		s_totalM    = 0.0f;
+		s_rejectRun = 0;
+		s_lastPtMs  = 0;
+		s_info.points    = 0;
+		s_info.distanceM = 0.0f;
+	}
+
+	/* 2) CSV 刷盘 */
+	if (s_syncReq)
+	{
+		s_syncReq = 0;
+		if (s_sdOk) f_sync(&s_csv);
+	}
+
+	/* 3) 保存地图(原来在 UiTask 里直接调 FatFs, 现在挪到这里) */
+	if (s_saveReq)
+	{
+		s_saveReq = 0;
+		NavLog_DoSaveMap();
+	}
+
+	/* 4) SD信息快照: 最多 500ms 刷一次(f_getfree 要扫FAT, 别每次都做) */
+	if (s_infoReq && (uint32_t)(now - s_info.infoMs) >= 500u)
+	{
+		s_infoReq = 0;
+		NavLog_RefreshInfo(now);
+	}
 }

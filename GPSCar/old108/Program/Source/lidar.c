@@ -146,3 +146,26 @@ uint16_t Lidar_GetMinDistance(uint16_t center, uint16_t halfWidth)
     }
     return min;
 }
+/*************************************************************************************************
+*	函 数 名:	USART3_IRQHandler
+*
+*	函数功能:	LD19 雷达的空闲中断: 只负责把 IDLE 标志清掉
+*
+*	说    明:	【这是一个必须存在的中断函数】
+*				Lidar_Init() 里使能了 USART3 的 IDLE 中断和 NVIC, 但工程里原来
+*				只有 asrpro.c 定义过 USART3_IRQHandler, 而 asrpro.c 并没有加进
+*				Keil 工程 -> 向量表里 USART3 落在启动文件的 [WEAK] Default_Handler
+*				(B . 死循环)。只要雷达开始吐数据, 总线上一定出现空闲 -> IDLE 置位
+*				-> 进死循环, 而且 IDLE 没人清, 中断会一直挂着 -> 整车像卡死。
+*				清 IDLE 的顺序必须是"先读 SR 再读 DR", 这里 USART_GetITStatus()
+*				读 SR、USART_ReceiveData() 读 DR, 正好满足要求(与 gps.c 同款写法)。
+*				真正的数据搬运仍然由 Lidar_Process() 从 DMA 缓冲里做。
+*
+*************************************************************************************************/
+void USART3_IRQHandler(void)
+{
+	if (USART_GetITStatus(USART3, USART_IT_IDLE) != RESET)
+	{
+		USART_ReceiveData(USART3);		/* 读 SR + DR, 清除 IDLE 标志(不能省) */
+	}
+}

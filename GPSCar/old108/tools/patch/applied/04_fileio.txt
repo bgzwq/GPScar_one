@@ -1,0 +1,269 @@
+#FILE Mid/Inc/navlog.h
+#ENC gbk
+#OP before 0 #endif /* __NAVLOG_H */
+/*---------------------- 文件作业 / 状态快照(跨任务用) ------------*/
+/*
+ * 【为什么要这一层】
+ * FatFs 不是可重入的(ffconf.h 里 FF_FS_REENTRANT=0), 而拆成多任务以后
+ * UiTask(菜单保存地图 / TF 页查容量) 和 LogTask(轨迹写卡) 会同时碰 SD 卡,
+ * 一旦被抢占就可能破坏 FAT 表或文件对象。
+ * 现在的规矩:
+ *   1) 所有 f_open/f_write/f_stat/f_sync 只在 LogTask 里发生(NavLog_Service);
+ *   2) 其它任务只做两件事: NavLog_RequestXxx() 挂请求、NavLog_GetInfo() 读快照。
+ */
+typedef struct
+{
+	uint8_t  sdOk;			// 1=SD 可用
+	uint32_t freeMb;		// 剩余空间(MB)
+	uint32_t csvSize;		// TRACK.CSV 字节数
+	uint32_t bmpSize;		// MAP.BMP 字节数
+	uint32_t mapSize;		// CARMAP/MAP.BIN 字节数
+	uint32_t points;		// 已记录轨迹点数
+	uint32_t rejected;		// 被精度过滤丢弃的次数
+	float    distanceM;		// 累计里程(m)
+	uint32_t infoMs;		// 快照刷新时间
+	uint8_t  saveBusy;		// 1=正在保存地图
+	uint8_t  saveResult;	// 0=本次上电还没保存过 1=成功 2=失败
+	uint32_t saveMs;		// 保存完成时间
+} NavLog_Info_TypeDef;
+
+void NavLog_RequestSaveMap(void);				// 请求保存 BMP + MAP.BIN(异步)
+void NavLog_RequestSdInfo(void);				// 请求刷新 SD 信息快照(异步)
+void NavLog_Service(void);						// 【只在 LogTask 里调用】
+const NavLog_Info_TypeDef *NavLog_GetInfo(void);
+#FILE Mid/Src/navlog.c
+#ENC gbk
+#OP after 0 #include "navlog.h"
+#include "mapview.h"
+#include "map_collent.h"
+#OP after 0 static uint32_t s_csvRows  = 0;
+/* ---- 跨任务的作业请求与状态快照: UiTask 只写这几个标志, LogTask 负责执行 ---- */
+static volatile uint8_t s_saveReq;		// 1=请求保存地图(BMP + MAP.BIN)
+static volatile uint8_t s_infoReq;		// 1=请求刷新SD信息快照
+static volatile uint8_t s_clearReq;		// 1=请求清空RAM轨迹
+static volatile uint8_t s_syncReq;		// 1=请求CSV刷盘
+static NavLog_Info_TypeDef s_info;		// 状态快照(NavLog_Service 写, 其它任务只读)
+#OP repl 3 void NavLog_Clear(void)
+void NavLog_Clear(void)
+{
+	/* 只挂请求: 真正清空在 LogTask 的 NavLog_Service() 里做,
+	 * 否则 UiTask 清 s_count 的同时 LogTask 正在追加点, 会写出错点/越界。 */
+	s_clearReq = 1;
+}
+#OP repl 4 void NavLog_Sync(void)
+void NavLog_Sync(void)
+{
+	/* 只挂请求: 真正的 f_sync 在 LogTask 里做(见 navlog.h 的说明) */
+	s_syncReq = 1;
+}
+#OP after 0 s_lastPtMs = now;
+	s_info.points    = s_count;
+	s_info.rejected  = s_reject;
+	s_info.distanceM = s_totalM;
+#OP eof 0 .
+/*---------------------- 跨任务作业 / 状态快照实现 ----------------------------*/
+
+/*************************************************************************************************
+*	函 数 名:	NavLog_RefreshInfo
+*
+*	函数功能:	刷新 SD/文件状态快照(f_stat/f_getfree 都在这里, 只在 LogTask 调用)
+*
+*************************************************************************************************/
+static void NavLog_RefreshInfo(uint32_t now)
+{
+	FILINFO fno;
+	DWORD   freeClusters = 0;
+	FATFS  *fs = 0;
+
+	s_info.sdOk      = s_sdOk;
+	s_info.points    = s_count;
+	s_info.rejected  = s_reject;
+	s_info.distanceM = s_totalM;
+	s_info.freeMb    = 0;
+	s_info.csvSize   = 0;
+	s_info.bmpSize   = 0;
+	s_info.mapSize   = 0;
+
+	if (s_sdOk)
+	{
+		if (f_stat((char *)NAVLOG_CSV_PATH, &fno) == FR_OK) s_info.csvSize = (uint32_t)fno.fsize;
+		if (f_stat((char *)NAVLOG_BMP_PATH, &fno) == FR_OK) s_info.bmpSize = (uint32_t)fno.fsize;
+		if (f_stat("0:/CARMAP/MAP.BIN", &fno) == FR_OK)     s_info.mapSize = (uint32_t)fno.fsize;
+		if (f_getfree("0:", &freeClusters, &fs) == FR_OK && fs != 0)
+			s_info.freeMb = (uint32_t)(freeClusters * fs->csize / 2048);
+	}
+	s_info.infoMs = now;
+}
+
+/*************************************************************************************************
+*	函 数 名:	NavLog_DoSaveMap
+*
+*	函数功能:	保存地图(BMP + 拓扑 MAP.BIN) —— 只在 LogTask 里执行
+*
+*************************************************************************************************/
+static void NavLog_DoSaveMap(void)
+{
+	uint8_t okBmp, okMap;
+
+	s_info.saveBusy = 1;
+	okMap = map_write_SD(0, "0:/CARMAP/MAP.BIN") ? 1 : 0;
+	okBmp = MapView_SaveToSd() ? 1 : 0;
+	s_info.saveResult = (okBmp && okMap) ? 1 : 2;
+	s_info.saveMs     = Get_Ms();
+	s_info.saveBusy   = 0;
+	printf("[NAV] save map: bmp=%u bin=%u\r\n", (unsigned)okBmp, (unsigned)okMap);
+}
+
+/*************************************************************************************************
+*	函 数 名:	NavLog_RequestSaveMap / NavLog_RequestSdInfo / NavLog_GetInfo
+*
+*	函数功能:	【供任意任务调用】挂作业请求 / 读状态快照, 都不碰 FatFs
+*
+*************************************************************************************************/
+void NavLog_RequestSaveMap(void)
+{
+	s_saveReq = 1;
+}
+
+void NavLog_RequestSdInfo(void)
+{
+	s_infoReq = 1;
+}
+
+const NavLog_Info_TypeDef *NavLog_GetInfo(void)
+{
+	return &s_info;
+}
+
+/*************************************************************************************************
+*	函 数 名:	NavLog_Service
+*
+*	函数功能:	【只在 LogTask 里调用】执行其它任务挂过来的作业 + 刷新状态快照
+*
+*	说    明:	这是全工程唯一"由用户动作触发"的 FatFs 调用点(轨迹记录仍在
+*				NavLog_Update 里, 同一个任务), 从而彻底消除两个任务同时用卡。
+*
+*************************************************************************************************/
+void NavLog_Service(void)
+{
+	uint32_t now = Get_Ms();
+
+	/* 1) 清空RAM轨迹(KEY4 长按) */
+	if (s_clearReq)
+	{
+		s_clearReq  = 0;
+		s_count     = 0;
+		s_totalM    = 0.0f;
+		s_rejectRun = 0;
+		s_lastPtMs  = 0;
+		s_info.points    = 0;
+		s_info.distanceM = 0.0f;
+	}
+
+	/* 2) CSV 刷盘 */
+	if (s_syncReq)
+	{
+		s_syncReq = 0;
+		if (s_sdOk) f_sync(&s_csv);
+	}
+
+	/* 3) 保存地图(原来在 UiTask 里直接调 FatFs, 现在挪到这里) */
+	if (s_saveReq)
+	{
+		s_saveReq = 0;
+		NavLog_DoSaveMap();
+	}
+
+	/* 4) SD信息快照: 最多 500ms 刷一次(f_getfree 要扫FAT, 别每次都做) */
+	if (s_infoReq && (uint32_t)(now - s_info.infoMs) >= 500u)
+	{
+		s_infoReq = 0;
+		NavLog_RefreshInfo(now);
+	}
+}
+#FILE Mid/Src/location.c
+#ENC gbk
+#OP after 0 #include "location.h"
+#include "menu.h"		/* 用 g_mpu 作为"最近一帧 MPU 数据"的发布缓冲(见 Location_Update) */
+#OP after 0 mpuOK = (MPU6050_ReadData(&mpu) == 0) ? 1 : 0;
+	/* 【单读者】全工程只有 NavTask(Location_Update) 读 MPU6050(I2C1)。
+	 * UiTask 原来也每 200ms 读一次, 两个任务交替操作同一组 I2C 寄存器会出现
+	 * NACK / 半新半旧的数据。这里把读到的值发布到 g_mpu 供菜单显示。 */
+	if (mpuOK) g_mpu = mpu;
+#FILE MY/main.c
+#IND space
+#ENC gbk
+#OP after 0 NavLog_Update(Get_Ms());
+        NavLog_Service();       /* 执行其它任务挂过来的 SD 作业(存地图/刷盘/查容量) */
+#FILE Mid/Src/menu.c
+#ENC gbk
+#OP repl 3 static const char *s_mapMsg = 0;
+#OP repl 19 void Menu_MapSave(void)
+void Menu_MapSave(void)
+{
+	LCD_SetAsciiFont(&ASCII_Font12);
+	LCD_SetColor(LIGHT_YELLOW);
+	LCD_DisplayString(4, 212, "Saving map to SD...");
+
+	/* 【只挂请求】FatFs 不可重入, 真正的 f_open/f_write 由 LogTask 的
+	 * NavLog_Service() 执行; 保存结果从 NavLog_GetInfo() 的快照里读回来,
+	 * 在地图页信息行显示 3 秒(见 Menu_PageMap)。 */
+	NavLog_RequestSaveMap();
+	Buzzer_BeepAsync(2400, 40);
+}
+#OP repl 26 FILINFO info;
+	/* 【只读快照】f_stat/f_getfree 都在 LogTask 里做, 这里只挂一个刷新请求 */
+	const NavLog_Info_TypeDef *info = NavLog_GetInfo();
+
+	NavLog_RequestSdInfo();
+
+	LCD_SetAsciiFont(&ASCII_Font16);
+	LCD_SetColor(info->sdOk ? LIGHT_GREEN : LIGHT_RED);
+	LCD_DisplayString(4, 24, "TF card:");
+	LCD_DisplayString(84, 24, (char *)NavLog_GetStateName());
+	LCD_SetColor(LCD_WHITE);
+	LCD_DisplayString(4, 50, "Free:");
+	LCD_DisplayNumber(60, 50, info->freeMb, 5);
+	LCD_DisplayString(116, 50, "MB");
+	LCD_DisplayString(4, 74, "TRACK.CSV:");
+	LCD_DisplayNumber(100, 74, info->csvSize, 8);
+	LCD_DisplayString(4, 96, "MAP.BMP  :");
+	LCD_DisplayNumber(100, 96, info->bmpSize, 8);
+	LCD_DisplayString(4, 118, "MAP.BIN  :");
+	LCD_DisplayNumber(100, 118, info->mapSize, 8);
+	LCD_SetColor(LIGHT_CYAN);
+	LCD_DisplayString(4, 146, "Track points:");
+	LCD_DisplayNumber(116, 146, info->points, 5);
+	LCD_DisplayString(4, 168, "Rejected:");
+	LCD_DisplayNumber(84, 168, info->rejected, 5);
+	LCD_DisplayString(4, 190, "Distance:");
+	LCD_DisplayDecimals(84, 190, info->distanceM, 6, 1);
+}
+#OP before 0 MapView_Refresh(1);
+	const NavLog_Info_TypeDef *info = NavLog_GetInfo();
+#OP repl 26 /* 刚保存过地图 -> 先显示3秒结果提示 */
+	/* 保存结果: 由 LogTask 执行完后写在快照里, 这里只显示 3 秒 */
+	if (info->saveResult && (uint32_t)(Get_Ms() - info->saveMs) < 3000u)
+	{
+		LCD_SetColor(info->saveResult == 1 ? LIGHT_GREEN : LIGHT_RED);
+		LCD_DisplayString(4, 212, info->saveResult == 1 ? "Saved BMP+MAP.BIN" :
+		                                                   "Save FAILED (SD?)");
+	}
+	else
+	{
+		LCD_SetColor(LIGHT_CYAN);
+		LCD_DisplayString(4, 212, "Pts:");
+		LCD_DisplayNumber(30, 212, (int32_t)info->points, 4);
+
+		LCD_SetColor(LIGHT_GREEN);
+		LCD_DisplayDecimals(56, 212, info->distanceM, 5, 1);
+		LCD_DisplayString(88, 212, "m");
+
+		LCD_SetColor(LIGHT_YELLOW);
+		LCD_DisplayString(100, 212, "SD:");
+		LCD_DisplayString(118, 212, (char *)NavLog_GetStateName());
+
+		LCD_SetColor(LIGHT_MAGENTA);
+		LCD_DisplayString(152, 212, "K2:");
+		LCD_DisplayString(170, 212, (char *)K230_GetStateName());
+	}

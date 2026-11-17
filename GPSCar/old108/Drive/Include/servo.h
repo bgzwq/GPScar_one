@@ -26,5 +26,6 @@
 void 	Servo_Init(void);						// 舵机初始化, 默认转到90度
 void 	Servo_SetAngle(float angle);			// 设置角度 0~180
 void 	Servo_SetPulse(uint16_t pulseUs);		// 直接设置脉宽 500~2500us
+uint8_t Servo_IsEnabled(void);					// 舵机是否可用: 0=已禁用(当前恒为0)
 
 #endif //__SERVO_H

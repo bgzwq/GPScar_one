@@ -1,0 +1,3 @@
+#FILE Mid/Src/navlog.c
+#ENC gbk
+#OP@350 repl 4 s_totalM

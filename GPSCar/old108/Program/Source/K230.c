@@ -264,10 +264,14 @@ static void K230_ControlCar(const K230_con *k230_c)
 		return;					// 非视觉模式不接管底盘
 	}
 
-	Car_SetWheelSpeed(MOTOR_1, (int16_t)k230_c->speed1 * K230_CAR_SPEED / 100);
-	Car_SetWheelSpeed(MOTOR_2, (int16_t)k230_c->speed2 * K230_CAR_SPEED / 100);
-	Car_SetWheelSpeed(MOTOR_3, (int16_t)k230_c->speed3 * K230_CAR_SPEED / 100);
-	Car_SetWheelSpeed(MOTOR_4, (int16_t)k230_c->speed4 * K230_CAR_SPEED / 100);
+	{
+		int16_t w[4];
+		w[0] = (int16_t)k230_c->speed1 * K230_CAR_SPEED / 100;
+		w[1] = (int16_t)k230_c->speed2 * K230_CAR_SPEED / 100;
+		w[2] = (int16_t)k230_c->speed3 * K230_CAR_SPEED / 100;
+		w[3] = (int16_t)k230_c->speed4 * K230_CAR_SPEED / 100;
+		Car_PostWheels(CAR_SRC_VISION, w);	/* 只投递, 真正写电机在 ControlTask */
+	}
 
 	s_wasControlling = 1;
 }

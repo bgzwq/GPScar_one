@@ -41,12 +41,29 @@ static void LidarTask(void *arg);
 static void MissionTask(void *arg);
 static void CommTask(void *arg);
 static void UiTask(void *arg);
+static void SensorTask(void *arg);
 static void LogTask(void *arg);
 static void LedTask(void *arg);
 
+/* 这个模式到底有没有运动实现(只在切模式时打印提示用) */
+static uint8_t App_ModeImplemented(WorkMode_TypeDef mode)
+{
+    switch (mode)
+    {
+        case MODE_IDLE:
+        case MODE_MANUAL:
+        case MODE_AVOID:
+        case MODE_VISION:
+        case MODE_ESTOP:
+            return 1;
+        default:
+            return 0;
+    }
+}
 void App_SetMode(WorkMode_TypeDef mode)
 {
     WorkMode_TypeDef old = g_mode;
+    if (mode >= MODE_NUM) mode = MODE_IDLE;     /* 越界保护: g_mode 会被当成 s_modeName[] 的下标 */
     if (Estop_IsActive() && mode != MODE_ESTOP && mode != MODE_IDLE) return;
     Car_Stop();
     g_mode = mode;
@@ -54,13 +71,16 @@ void App_SetMode(WorkMode_TypeDef mode)
     s_scanCount = 0;
     if (mode == MODE_VISION && old != MODE_VISION) K230_StartTrack();
     else if (mode != MODE_VISION && old == MODE_VISION) K230_StopTrack();
-    printf("Mode -> %s\r\n", Menu_GetModeName());
+    printf("Mode -> %s%s\r\n", Menu_GetModeName(), App_ModeImplemented(mode) ? "" : " (no motion impl)");
 }
 
 void App_SwitchMode(void)
 {
+    /* 只循环"真正实现了运动"的模式。PATROL/RADAR/SCAN/APPROACH/ALIGN/WAIT_ARM
+     * 目前没有运动实现(采摘链没有入口, 雷达模式用的舵机是空函数), 放进循环
+     * 只会让按键切到"车不动"的状态, 看起来像死机。 */
     static const WorkMode_TypeDef modes[] = {
-        MODE_IDLE, MODE_MANUAL, MODE_PATROL, MODE_AVOID, MODE_RADAR, MODE_VISION
+        MODE_IDLE, MODE_MANUAL, MODE_VISION, MODE_AVOID
     };
     uint8_t i;
     if (Estop_IsActive())
@@ -103,9 +123,10 @@ static void AppTaskCreate(void)
     if (App_Create(LidarTask, "Lidar", 512, 4) != pdPASS) while (1);
     if (App_Create(MissionTask, "Mission", 512, 4) != pdPASS) while (1);
     if (App_Create(CommTask, "Comm", 512, 3) != pdPASS) while (1);
-    if (App_Create(UiTask, "UI", 512, 2) != pdPASS) while (1);
+    if (App_Create(UiTask, "UI", 768, 2) != pdPASS) while (1);      /* FatFs/长文件名已移出, 但留足余量 */
     if (App_Create(LogTask, "Log", 768, 1) != pdPASS) while (1);
     if (App_Create(LedTask, "LED", 128, 3) != pdPASS) while (1);
+    if (App_Create(SensorTask, "Sensor", 384, 3) != pdPASS) while (1);
 }
 
 static void SafetyTask(void *arg)
@@ -127,7 +148,7 @@ static void ControlTask(void *arg)
     (void)arg;
     for (;;)
     {
-        Car_SpeedUpdate();
+        Car_ControlTask();      /* 唯一写电机的地方: 20ms 取一条底盘命令并输出 */
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(20));
     }
 }
@@ -171,9 +192,9 @@ static void MissionTask(void *arg)
             {
                 uint16_t left = Lidar_GetMinDistance(90, 45);
                 uint16_t right = Lidar_GetMinDistance(270, 45);
-                Car_Turn(left >= right ? CAR_DIR_LEFT : CAR_DIR_RIGHT, g_speed);
+                Car_PostTurn(CAR_SRC_AVOID, left >= right ? CAR_DIR_LEFT : CAR_DIR_RIGHT, g_speed);
             }
-            else Car_Move(CAR_DIR_FORWARD, g_speed);
+            else Car_PostDir(CAR_SRC_AVOID, CAR_DIR_FORWARD, g_speed);
         }
         switch (g_mode)
         {
@@ -221,21 +242,33 @@ static void CommTask(void *arg)
 static void UiTask(void *arg)
 {
     TickType_t wake = xTaskGetTickCount();
-    uint32_t lastKey = 0, lastLcd = 0, lastSensor = 0, lastRadar = 0, lastMpu = 0;
+    uint32_t lastKey = 0, lastLcd = 0;
     (void)arg;
     for (;;)
     {
         uint32_t now = Get_Ms();
         if ((uint32_t)(now - lastKey) >= 50) { lastKey = now; Menu_KeyProcess(); }
-        if ((uint32_t)(now - lastSensor) >= 100)
-        { lastSensor = now; g_distFixed = Ultrasonic_GetDistance(ULTRA_FIXED); }
-        if ((uint32_t)(now - lastRadar) >= 300)
-        { lastRadar = now; g_distRadar = Ultrasonic_GetDistance(ULTRA_RADAR); }
-        if (g_mpuOK && (uint32_t)(now - lastMpu) >= 200)
-        { lastMpu = now; MPU6050_ReadData(&g_mpu); }
         if ((uint32_t)(now - lastLcd) >= 300) { lastLcd = now; Menu_Refresh(); }
         Buzzer_Task();
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(10));
+    }
+}
+
+/* 传感器任务: 超声波是"阻塞式"测距(无回波要等满30ms), 从 UiTask 挪出来以后
+ * 屏幕刷新与按键响应不再被它拖住。优先级 3: 低于 Safety/Control/Nav/Mission/Lidar,
+ * 高于 UI/Log, 保证 g_distFixed(20cm 急停判据) 的更新不会被刷屏挤掉。 */
+static void SensorTask(void *arg)
+{
+    uint32_t lastFixed = 0, lastRadar = 0;
+    (void)arg;
+    for (;;)
+    {
+        uint32_t now = Get_Ms();
+        if ((uint32_t)(now - lastFixed) >= 100)
+        { lastFixed = now; g_distFixed = Ultrasonic_GetDistance(ULTRA_FIXED); }
+        if ((uint32_t)(now - lastRadar) >= 300)
+        { lastRadar = now; g_distRadar = Ultrasonic_GetDistance(ULTRA_RADAR); }
+        vTaskDelay(pdMS_TO_TICKS(5));       /* 不用 vTaskDelayUntil: 内部阻塞会让它一路追赶 */
     }
 }
 
@@ -246,6 +279,7 @@ static void LogTask(void *arg)
     for (;;)
     {
         NavLog_Update(Get_Ms());
+        NavLog_Service();       /* 执行其它任务挂过来的 SD 作业(存地图/刷盘/查容量) */
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(100));
     }
 }
@@ -257,6 +291,7 @@ static void LedTask(void *arg)
     for (;;)
     {
         LED1_Toggle;
+        App_IwdgFeed();     /* 可选看门狗: APP_USE_IWDG=0 时是空操作 */
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(500));
     }
 }

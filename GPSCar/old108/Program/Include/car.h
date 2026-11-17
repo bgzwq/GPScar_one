@@ -53,4 +53,32 @@ int16_t Car_GetSpeed(uint8_t id);						// 读取轮速反馈(脉冲/周期)
 int16_t Car_GetTarget(uint8_t id);						// 读取轮速目标
 uint8_t Car_IsRunning(void);							// 是否处于闭环运行状态
 
+/*---------------------- 底盘命令源(谁在开车) --------------------*/
+/*
+ * 【为什么改成"投递命令"】
+ * 原来 lanyacon.c / uart_host.c / K230.c / main.c 都直接调 Car_Move()/Car_SetWheelSpeed(),
+ * 而 Car_Move() 内部是 4 次独立的 Car_SetWheelSpeed():
+ *   1) 中间被更高优先级任务打断 -> 出现"左轮已改、右轮还没改"的半截状态, 车会抽一下;
+ *   2) 两个源(例如摇杆与视觉)交替覆盖, 谁最后写谁赢, 行为不可预测。
+ * 现在: 任何任务只调用 Car_Post*() 投递一条命令(小结构体, 临界区保护),
+ *       只有 ControlTask 每 20ms 调一次 Car_ControlTask() 时才真正写电机。
+ * Car_Stop() 例外: 它是"全零 + 制动"的幂等操作, 任何任务都可以直接调用(急停/切模式)。
+ */
+#define CAR_SRC_NONE	0
+#define CAR_SRC_MANUAL	1	// 蓝牙摇杆 / ESP32 文本指令
+#define CAR_SRC_AVOID	2	// 雷达避障(MissionTask)
+#define CAR_SRC_VISION	3	// K230 视觉
+#define CAR_SRC_TEST	4	// KEY4 电机自检
+
+void 	Car_PostDir(uint8_t src, CarDir_TypeDef dir, int16_t speed);		// 整车按方向走
+void 	Car_PostTurn(uint8_t src, CarDir_TypeDef dir, int16_t speed);	// 行进中差速转弯(等价 Car_Turn)
+void 	Car_PostLR(uint8_t src, int16_t left, int16_t right);			// 直接给左右两侧速度
+void 	Car_PostWheels(uint8_t src, const int16_t w[4]);				// 直接给4个轮子速度
+void 	Car_PostWheel(uint8_t src, uint8_t id, int16_t speed);			// 单轮目标速度
+void 	Car_PostPwm(uint8_t src, uint8_t id, int16_t pwm);				// 单轮原始PWM千分比(-1000~1000)
+void 	Car_PostPwmAll(uint8_t src, int16_t pwm);						// 四轮同PWM(自检阶段1用)
+void 	Car_PostBrake(uint8_t src);										// 四轮制动
+void 	Car_ControlTask(void);											// 【只在 ControlTask 每20ms调一次】
+void 	Car_TestLock(uint8_t on);										// 1=自检独占底盘(其它源命令被丢弃)
+uint8_t Car_GetActiveSrc(void);											// 最近一次生效的命令源(诊断用)
 #endif //__CAR_H

@@ -55,7 +55,16 @@ uint8_t	KEY_Scan(void)
 		Delay_ms(10);	//延时消抖
 		if(GPIO_ReadInputDataBit ( KEY_PORT,KEY_PIN) == 0)	//再次检测是否为低电平
 		{
-			while(GPIO_ReadInputDataBit ( KEY_PORT,KEY_PIN) == 0);	//等待按键放开
+			{	/* [2026-11] 原来是 while(按下); 无上限死等: 按键卡住/引脚短路就永久死循环。
+				 * 改成有上限轮询(最长约1秒)后返回, 保证不会把调用者卡死。
+				 * 注意: 本文件目前没有被工程引用(BSP_Init 不调 KEY_Init), 属预留代码。 */
+				uint32_t guard = 0;
+				while (GPIO_ReadInputDataBit(KEY_PORT, KEY_PIN) == 0)
+				{
+					Delay_ms(1);
+					if (++guard > 1000u) break;
+				}
+			}
 			return KEY_ON;	//返回按键按下标志
 		}
 	}

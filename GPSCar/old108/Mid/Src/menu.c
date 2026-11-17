@@ -48,6 +48,7 @@
 #include "K230.h"
 #include "uart_host.h"
 #include "lidar.h"
+#include "servo.h"
 #include "estop.h"
 #include "map_collent.h"
 #include "lanyacon.h"
@@ -78,9 +79,6 @@ typedef enum
 static uint8_t s_page = PAGE_OVERVIEW;
 
 /* 地图保存结果的临时提示(只显示几秒, 之后回到正常信息行) */
-static const char *s_mapMsg = 0;
-static uint32_t    s_mapMsgUntil = 0;
-
 /* 页名(定宽4字符) */
 static const char *s_pageName[PAGE_NUM] =
 { "HOME", "ESP ", "MOTR", "SENS", "MPU ", "GPS ", "IO  ", "MAP ", "TF  ", "DBG " };
@@ -117,6 +115,7 @@ static void Menu_PageTf(void);
 *************************************************************************************************/
 const char *Menu_GetModeName(void)
 {
+	if (g_mode >= MODE_NUM) return "???  ";	/* 越界保护: g_mode 直接当数组下标会读飞 */
 	return s_modeName[g_mode];
 }
 
@@ -288,18 +287,11 @@ void Menu_MapSave(void)
 	LCD_SetColor(LIGHT_YELLOW);
 	LCD_DisplayString(4, 212, "Saving map to SD...");
 
-	map_write_SD(0, "0:/CARMAP/MAP.BIN");
-	if (MapView_SaveToSd())
-	{
-		Buzzer_BeepAsync(3000, 80);
-		s_mapMsg = "Saved BMP + MAP.BIN";
-	}
-	else
-	{
-		Buzzer_BeepAsync(800, 200);
-		s_mapMsg = "Save FAILED (SD card?)";
-	}
-	s_mapMsgUntil = Get_Ms() + 3000;
+	/* 【只挂请求】FatFs 不可重入, 真正的 f_open/f_write 由 LogTask 的
+	 * NavLog_Service() 执行; 保存结果从 NavLog_GetInfo() 的快照里读回来,
+	 * 在地图页信息行显示 3 秒(见 Menu_PageMap)。 */
+	NavLog_RequestSaveMap();
+	Buzzer_BeepAsync(2400, 40);
 }
 
 
@@ -328,31 +320,32 @@ static void Menu_PageComm(void)
 
 static void Menu_PageTf(void)
 {
-    FILINFO info;
-    DWORD freeClusters;
-    FATFS *fs;
-    uint32_t freeMb = 0;
-    uint32_t csvSize = 0, bmpSize = 0, mapSize = 0;
-    if (NavLog_IsSdOk())
-    {
-        if (f_stat(NAVLOG_CSV_PATH, &info) == FR_OK) csvSize = (uint32_t)info.fsize;
-        if (f_stat(NAVLOG_BMP_PATH, &info) == FR_OK) bmpSize = (uint32_t)info.fsize;
-        if (f_stat("0:/CARMAP/MAP.BIN", &info) == FR_OK) mapSize = (uint32_t)info.fsize;
-        if (f_getfree("0:", &freeClusters, &fs) == FR_OK)
-            freeMb = (uint32_t)(freeClusters * fs->csize / 2048);
-    }
-    LCD_SetAsciiFont(&ASCII_Font16);
-    LCD_SetColor(NavLog_IsSdOk() ? LIGHT_GREEN : LIGHT_RED);
-    LCD_DisplayString(4, 24, "TF card:"); LCD_DisplayString(84, 24, (char *)NavLog_GetStateName());
-    LCD_SetColor(LCD_WHITE);
-    LCD_DisplayString(4, 50, "Free:"); LCD_DisplayNumber(60, 50, freeMb, 5); LCD_DisplayString(116, 50, "MB");
-    LCD_DisplayString(4, 74, "TRACK.CSV:"); LCD_DisplayNumber(100, 74, csvSize, 8);
-    LCD_DisplayString(4, 96, "MAP.BMP  :"); LCD_DisplayNumber(100, 96, bmpSize, 8);
-    LCD_DisplayString(4, 118, "MAP.BIN  :"); LCD_DisplayNumber(100, 118, mapSize, 8);
-    LCD_SetColor(LIGHT_CYAN);
-    LCD_DisplayString(4, 146, "Track points:"); LCD_DisplayNumber(116, 146, NavLog_GetCount(), 5);
-    LCD_DisplayString(4, 168, "Rejected:"); LCD_DisplayNumber(84, 168, NavLog_GetRejectCount(), 5);
-    LCD_DisplayString(4, 190, "Distance:"); LCD_DisplayDecimals(84, 190, NavLog_GetDistanceM(), 6, 1);
+	/* 【只读快照】f_stat/f_getfree 都在 LogTask 里做, 这里只挂一个刷新请求 */
+	const NavLog_Info_TypeDef *info = NavLog_GetInfo();
+
+	NavLog_RequestSdInfo();
+
+	LCD_SetAsciiFont(&ASCII_Font16);
+	LCD_SetColor(info->sdOk ? LIGHT_GREEN : LIGHT_RED);
+	LCD_DisplayString(4, 24, "TF card:");
+	LCD_DisplayString(84, 24, (char *)NavLog_GetStateName());
+	LCD_SetColor(LCD_WHITE);
+	LCD_DisplayString(4, 50, "Free:");
+	LCD_DisplayNumber(60, 50, info->freeMb, 5);
+	LCD_DisplayString(116, 50, "MB");
+	LCD_DisplayString(4, 74, "TRACK.CSV:");
+	LCD_DisplayNumber(100, 74, info->csvSize, 8);
+	LCD_DisplayString(4, 96, "MAP.BMP  :");
+	LCD_DisplayNumber(100, 96, info->bmpSize, 8);
+	LCD_DisplayString(4, 118, "MAP.BIN  :");
+	LCD_DisplayNumber(100, 118, info->mapSize, 8);
+	LCD_SetColor(LIGHT_CYAN);
+	LCD_DisplayString(4, 146, "Track points:");
+	LCD_DisplayNumber(116, 146, info->points, 5);
+	LCD_DisplayString(4, 168, "Rejected:");
+	LCD_DisplayNumber(84, 168, info->rejected, 5);
+	LCD_DisplayString(4, 190, "Distance:");
+	LCD_DisplayDecimals(84, 190, info->distanceM, 6, 1);
 }
 
 static void Menu_PageDebug(void)
@@ -375,7 +368,11 @@ static void Menu_PageDebug(void)
     LCD_DisplayString(120, 156, "E:"); LCD_DisplayNumber(144, 156, Estop_GetSource(), 3);
     LCD_DisplayString(4, 176, "E-stop count:"); LCD_DisplayNumber(116, 176, Estop_GetCount(), 5);
     LCD_SetColor(LIGHT_GREY);
-    LCD_DisplayString(4, 200, "Reset only by ESP cmd or K3");
+	/* 当前是谁在驱动底盘(CAR_SRC_*: 1=摇杆/2=避障/3=视觉/4=自检), 0=还没收到过命令 */
+	LCD_DisplayString(4, 200, "Src:");
+	LCD_DisplayNumber(44, 200, Car_GetActiveSrc(), 1);
+	LCD_DisplayString(64, 200, "reset: ESP cmd / K3");
+
 }
 
 /*---------------------- 各页面绘制 ---------------------------*/
@@ -467,8 +464,16 @@ static void Menu_PageSensor(void)
 	LCD_DisplayString(120, 24, "cm");
 	LCD_DisplayString(4, 44, "DistR:"); LCD_DisplayNumber(64, 44, (int32_t)g_distRadar, 4);
 	LCD_DisplayString(120, 44, "cm");
-	LCD_DisplayString(4, 64, "Servo:"); LCD_DisplayNumber(64, 64, (int32_t)g_servoAngle, 3);
-	LCD_DisplayString(120, 64, "deg");
+	if (Servo_IsEnabled())
+	{
+		LCD_DisplayString(4, 64, "Servo:"); LCD_DisplayNumber(64, 64, (int32_t)g_servoAngle, 3);
+		LCD_DisplayString(120, 64, "deg");
+	}
+	else
+	{
+		/* 舵机因供电不足被整体禁用(servo.c 函数体全注释), 显示 OFF 避免误解 */
+		LCD_DisplayString(4, 64, "Servo: OFF (disabled)");
+	}
 
 	LCD_SetColor(LIGHT_GREEN);
 	LCD_DisplayString(4, 88, "PWR1:"); LCD_DisplayDecimals(56, 88, SensorADC_GetVoltage(ADC_CH_POWER1), 4, 2);
@@ -644,27 +649,27 @@ static void Menu_PageIO(void)
 static void Menu_PageMap(void)
 {
 	/* 地图区域(内部按需重绘) */
+	const NavLog_Info_TypeDef *info = NavLog_GetInfo();
 	MapView_Refresh(1);
 
 	/* 信息行 */
 	LCD_SetAsciiFont(&ASCII_Font12);
 
-	/* 刚保存过地图 -> 先显示3秒结果提示 */
-	if (s_mapMsg && (int32_t)(Get_Ms() - s_mapMsgUntil) < 0)
+	/* 保存结果: 由 LogTask 执行完后写在快照里, 这里只显示 3 秒 */
+	if (info->saveResult && (uint32_t)(Get_Ms() - info->saveMs) < 3000u)
 	{
-		LCD_SetColor(LIGHT_GREEN);
-		LCD_DisplayString(4, 212, (char *)s_mapMsg);
+		LCD_SetColor(info->saveResult == 1 ? LIGHT_GREEN : LIGHT_RED);
+		LCD_DisplayString(4, 212, info->saveResult == 1 ? "Saved BMP+MAP.BIN" :
+		                                                   "Save FAILED (SD?)");
 	}
 	else
 	{
-		s_mapMsg = 0;
-
 		LCD_SetColor(LIGHT_CYAN);
 		LCD_DisplayString(4, 212, "Pts:");
-		LCD_DisplayNumber(30, 212, (int32_t)NavLog_GetCount(), 4);
+		LCD_DisplayNumber(30, 212, (int32_t)info->points, 4);
 
 		LCD_SetColor(LIGHT_GREEN);
-		LCD_DisplayDecimals(56, 212, NavLog_GetDistanceM(), 5, 1);
+		LCD_DisplayDecimals(56, 212, info->distanceM, 5, 1);
 		LCD_DisplayString(88, 212, "m");
 
 		LCD_SetColor(LIGHT_YELLOW);
@@ -675,6 +680,7 @@ static void Menu_PageMap(void)
 		LCD_DisplayString(152, 212, "K2:");
 		LCD_DisplayString(170, 212, (char *)K230_GetStateName());
 	}
+
 
 	/* 页脚 */
 	LCD_SetColor(LIGHT_GREY);
@@ -706,6 +712,7 @@ typedef enum
 } SelfTestState_TypeDef;
 
 static SelfTestState_TypeDef s_testState = ST_IDLE;
+
 static uint32_t s_testTimer  = 0;
 static uint8_t  s_testMotor  = 0;	// 阶段2当前电机
 static uint8_t  s_testSecond = 0;	// 阶段3已过秒数
@@ -720,11 +727,15 @@ static void Menu_SelfTestStart(void)
 		return;
 	}
 
-	Car_Stop();	// 停车, 避免干扰自检(PID已注释)
+	Car_Stop();			// 先停车
+	Car_TestLock(1);	// 自检期间独占底盘: 其它源(摇杆/避障/K230)的命令一律丢弃
 
 	printf("\r\n[TEST 1/3] all motors 30%%PWM for 2s\r\n");
 	for (i = 0; i < MOTOR_NUM; i++) Encoder_ReadDelta(i);	// 清增量
-	for (i = 0; i < MOTOR_NUM; i++) Motor_SetSpeed(i, 300);
+	/* 四轮同PWM必须用"一条命令带4个轮子": 邮箱只保留最新一条,
+	 * 循环投递4次的话只有最后一个轮子会转(这是改造时踩过的坑) */
+	Car_PostPwmAll(CAR_SRC_TEST, 300);
+
 
 	s_testTimer = Get_Ms();
 	s_testState = ST1_RUN;
@@ -746,7 +757,7 @@ static void Menu_SelfTestTick(void)
 			{
 				int16_t d[4];
 				for (i = 0; i < MOTOR_NUM; i++) d[i] = Encoder_ReadDelta(i);
-				Motor_StopAll();
+				Car_PostBrake(CAR_SRC_TEST);
 				printf("[TEST 1/3] enc delta: M1=%d M2=%d M3=%d M4=%d\r\n",
 					   d[0], d[1], d[2], d[3]);
 				s_testTimer = now;
@@ -762,7 +773,7 @@ static void Menu_SelfTestTick(void)
 				Encoder_ReadDelta(s_testMotor);
 				printf("M%d run... ", s_testMotor + 1);
 				Buzzer_Beep(2000, 50);
-				Motor_SetSpeed(s_testMotor, 300);
+					Car_PostPwm(CAR_SRC_TEST, s_testMotor, 300);
 				s_testTimer = now;
 				s_testState = ST2_SETTLE;
 			}
@@ -783,7 +794,7 @@ static void Menu_SelfTestTick(void)
 		case ST2_RUN:	// 再转950ms -> 停车打印增量
 			if ((uint32_t)(now - s_testTimer) >= 950)
 			{
-				Motor_Stop(s_testMotor);
+				Car_PostBrake(CAR_SRC_TEST);
 				delta = Encoder_ReadDelta(s_testMotor);
 				printf("M%d stop, encoder delta = %d\r\n", s_testMotor + 1, delta);
 				s_testTimer = now;
@@ -800,7 +811,7 @@ static void Menu_SelfTestTick(void)
 					Encoder_ReadDelta(s_testMotor);
 					printf("M%d run... ", s_testMotor + 1);
 					Buzzer_Beep(2000, 50);
-					Motor_SetSpeed(s_testMotor, 300);
+					Car_PostPwm(CAR_SRC_TEST, s_testMotor, 300);
 					s_testTimer = now;
 					s_testState = ST2_SETTLE;
 				}
@@ -818,6 +829,11 @@ static void Menu_SelfTestTick(void)
 		case ST3_HAND:	// 每秒打印一次累计值, 共10次
 			if ((uint32_t)(now - s_testTimer) >= 1000)
 			{
+				/* 每秒把编码器相关寄存器与引脚电平打一遍:
+				 * 手转轮子时如果 PA0/PA1/PA6/PA7 的 IDR 在变而 CNT 不变 -> 定时器/AF 问题;
+				 * 如果 IDR 都不变 -> 信号根本没进 MCU(线束/编码器供电/引脚被板载外设占死)。 */
+				Encoder_DiagDump();
+
 				printf("  total: ENC1=%ld ENC2=%ld ENC3=%ld ENC4=%ld\r\n",
 					   (long)Encoder_GetTotal(0), (long)Encoder_GetTotal(1),
 					   (long)Encoder_GetTotal(2), (long)Encoder_GetTotal(3));
@@ -825,13 +841,15 @@ static void Menu_SelfTestTick(void)
 				if (++s_testSecond >= 10)
 				{
 					printf("[MOTOR TEST] done\r\n");
+					Car_TestLock(0);
 					s_testState = ST_IDLE;
 				}
 			}
 			break;
 
 		default:
-			s_testState = ST_IDLE;
+					Car_TestLock(0);
+					s_testState = ST_IDLE;
 			break;
 	}
 }

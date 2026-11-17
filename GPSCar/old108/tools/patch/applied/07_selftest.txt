@@ -1,0 +1,36 @@
+#FILE Program/Include/car.h
+#ENC gbk
+#OP after 0 void 	Car_PostPwm(uint8_t src, uint8_t id, int16_t pwm);
+void 	Car_PostPwmAll(uint8_t src, int16_t pwm);						// 四轮同PWM(自检阶段1用)
+#FILE Program/Source/car.c
+#ENC gbk
+#OP after 0 void Car_PostBrake(uint8_t src)
+void Car_PostPwmAll(uint8_t src, int16_t pwm)
+{
+	Car_Push(8, src, 0, 0, pwm, 0, 0, 0);
+}
+
+/*************************************************************************************************
+*	函 数 名:	Car_PostBrake
+*
+*	函数功能:	投递"四轮制动"命令
+*
+*************************************************************************************************/
+void Car_PostBrake(uint8_t src)
+#OP before 0 		case 7:		/* 四轮制动 */
+		case 8:		/* 四轮同PWM(自检阶段1): 必须一条命令带4个轮子,
+					 * 否则循环投递4次会被邮箱合并成"只有最后一个轮子" */
+			for (i = 0; i < MOTOR_NUM; i++)
+			{
+				Motor_SetSpeed(i, p.v[0]);
+				s_wheel[i].target = (int16_t)(p.v[0] / CAR_OPENLOOP_SCALE);
+			}
+			s_running = (p.v[0] != 0) ? 1 : 0;
+			break;
+
+#FILE Mid/Src/menu.c
+#ENC gbk
+#OP repl 1 	for (i = 0; i < MOTOR_NUM; i++) Car_PostPwm(CAR_SRC_TEST, i, 300);
+	/* 四轮同PWM必须用"一条命令带4个轮子": 邮箱只保留最新一条,
+	 * 循环投递4次的话只有最后一个轮子会转(这是改造时踩过的坑) */
+	Car_PostPwmAll(CAR_SRC_TEST, 300);

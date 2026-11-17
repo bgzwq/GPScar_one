@@ -11,6 +11,7 @@
 ***/
 #include "stm32f4xx_it.h"
 #include "sdio_sd.h"
+#include <stdio.h>
 
 /** @addtogroup Template_Project
   * @{
@@ -43,10 +44,27 @@ void NMI_Handler(void)
   */
 void HardFault_Handler(void)
 {
-  /* Go to infinite loop when Hard Fault exception occurs */
-  while (1)
-  {
-  }
+	/* [2026-11] 原来只是 while(1), 现场什么都看不到。
+	 * 现在把 Cortex-M4 的故障寄存器打出来(用当前 MSP 的 ISR 栈, 4KB 够用),
+	 * 然后把 PC/LR 也留一份在静态变量里, 调试器停在这里就能看到。
+	 * 常见判读: CFSR 的 bit[7:0]=MMFSR(存储器), bit[15:8]=BFSR(总线),
+	 *           bit[31:16]=UFSR(用法故障); HFSR bit30=FORCED; MMFAR/BFAR=出错地址。
+	 * 注意: 打印完仍然死循环, 保留现场给调试器, 不做自动复位。 */
+	volatile uint32_t cfsr  = SCB->CFSR;
+	volatile uint32_t hfsr  = SCB->HFSR;
+	volatile uint32_t mmfar = SCB->MMFAR;
+	volatile uint32_t bfar  = SCB->BFAR;
+
+	printf("\r\n[HARDFAULT] CFSR=%08lX HFSR=%08lX MMFAR=%08lX BFAR=%08lX\r\n",
+		   (unsigned long)cfsr, (unsigned long)hfsr,
+		   (unsigned long)mmfar, (unsigned long)bfar);
+	printf("[HARDFAULT] (MMFSR=%02lX BFSR=%02lX UFSR=%04lX)\r\n",
+		   (unsigned long)(cfsr & 0xFFu), (unsigned long)((cfsr >> 8) & 0xFFu),
+		   (unsigned long)((cfsr >> 16) & 0xFFFFu));
+
+	while (1)
+	{
+	}
 }
 
 /**

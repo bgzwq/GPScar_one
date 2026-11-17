@@ -26,5 +26,13 @@ void BSP_Init(void);
   * @retval 1: present, 0: not found
   */
 uint8_t BSP_IsMpuReady(void);
+/**
+  * @brief  Optional independent watchdog (IWDG). Disabled by default.
+  * @note   Enable with APP_USE_IWDG=1 in bsp.c, then call App_IwdgFeed()
+  *         periodically from a task that is guaranteed to keep running
+  *         (the LED heartbeat is a good place).
+  */
+void App_IwdgInit(void);
+void App_IwdgFeed(void);
 
 #endif /* __BSP_H */

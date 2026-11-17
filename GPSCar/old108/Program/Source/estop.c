@@ -14,6 +14,7 @@ static uint8_t s_active;
 static uint8_t s_source;
 static uint8_t s_lowCount;
 static uint32_t s_count;
+static uint8_t  s_stopped;		// 1=本次急停已经停过车(避免每5ms重复写TIM1比较寄存器)
 
 void Estop_Init(void)
 {
@@ -36,6 +37,7 @@ void Estop_Init(void)
 void Estop_Request(uint8_t source)
 {
     if (!s_active) s_count++;
+	s_stopped = 1;
     s_active = 1;
     s_source |= source;
     Car_Stop();
@@ -48,6 +50,7 @@ uint8_t Estop_Reset(uint8_t source)
     if (GPIO_ReadInputDataBit(ESTOP_PORT, ESTOP_PIN) == Bit_RESET) return 0;
     s_active = 0;
     s_source = 0;
+	s_stopped = 0;
     s_lowCount = 0;
     GPIO_SetBits(ESTOP_STBY_PORT, ESTOP_STBY_PIN);
     return 1;
@@ -62,11 +65,15 @@ void Estop_Task(uint32_t now)
         if (s_lowCount >= 3) Estop_Request(ESTOP_SRC_GPIO);
     }
     else s_lowCount = 0;
-    if (s_active)
-    {
-        Car_Stop();
-        GPIO_ResetBits(ESTOP_STBY_PORT, ESTOP_STBY_PIN);
-    }
+	if (s_active)
+	{
+		if (!s_stopped)			/* 只停一次: 之后每5ms只保证 STBY 是低的 */
+		{
+			s_stopped = 1;
+			Car_Stop();
+		}
+		GPIO_ResetBits(ESTOP_STBY_PORT, ESTOP_STBY_PIN);
+	}
 }
 
 uint8_t Estop_IsActive(void) { return s_active; }

@@ -88,4 +88,34 @@ void NavLog_Sync(void);							// 把CSV缓存刷到卡上
 uint8_t NavLog_WriteBmp1bpp(const uint8_t *bits, uint16_t w, uint16_t h,
                             uint32_t fg, uint32_t bg);
 
+/*---------------------- 文件作业 / 状态快照(跨任务用) ------------*/
+/*
+ * 【为什么要这一层】
+ * FatFs 不是可重入的(ffconf.h 里 FF_FS_REENTRANT=0), 而拆成多任务以后
+ * UiTask(菜单保存地图 / TF 页查容量) 和 LogTask(轨迹写卡) 会同时碰 SD 卡,
+ * 一旦被抢占就可能破坏 FAT 表或文件对象。
+ * 现在的规矩:
+ *   1) 所有 f_open/f_write/f_stat/f_sync 只在 LogTask 里发生(NavLog_Service);
+ *   2) 其它任务只做两件事: NavLog_RequestXxx() 挂请求、NavLog_GetInfo() 读快照。
+ */
+typedef struct
+{
+	uint8_t  sdOk;			// 1=SD 可用
+	uint32_t freeMb;		// 剩余空间(MB)
+	uint32_t csvSize;		// TRACK.CSV 字节数
+	uint32_t bmpSize;		// MAP.BMP 字节数
+	uint32_t mapSize;		// CARMAP/MAP.BIN 字节数
+	uint32_t points;		// 已记录轨迹点数
+	uint32_t rejected;		// 被精度过滤丢弃的次数
+	float    distanceM;		// 累计里程(m)
+	uint32_t infoMs;		// 快照刷新时间
+	uint8_t  saveBusy;		// 1=正在保存地图
+	uint8_t  saveResult;	// 0=本次上电还没保存过 1=成功 2=失败
+	uint32_t saveMs;		// 保存完成时间
+} NavLog_Info_TypeDef;
+
+void NavLog_RequestSaveMap(void);				// 请求保存 BMP + MAP.BIN(异步)
+void NavLog_RequestSdInfo(void);				// 请求刷新 SD 信息快照(异步)
+void NavLog_Service(void);						// 【只在 LogTask 里调用】
+const NavLog_Info_TypeDef *NavLog_GetInfo(void);
 #endif /* __NAVLOG_H */

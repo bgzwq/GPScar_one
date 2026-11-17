@@ -33,10 +33,11 @@ static int UARTHost_Value(const char *line, const char *key, char *out, uint16_t
 
 static void UARTHost_Manual(const char *command)
 {
-    if (!strcmp(command, "F") || !strcmp(command, "forward")) Car_Move(CAR_DIR_FORWARD, g_speed);
-    else if (!strcmp(command, "B") || !strcmp(command, "back")) Car_Move(CAR_DIR_BACKWARD, g_speed);
-    else if (!strcmp(command, "L") || !strcmp(command, "left")) Car_Turn(CAR_DIR_LEFT, g_speed);
-    else if (!strcmp(command, "R") || !strcmp(command, "right")) Car_Turn(CAR_DIR_RIGHT, g_speed);
+    /* 只投递命令, 真正写电机在 ControlTask(见 car.h 的说明) */
+    if (!strcmp(command, "F") || !strcmp(command, "forward")) Car_PostDir(CAR_SRC_MANUAL, CAR_DIR_FORWARD, g_speed);
+    else if (!strcmp(command, "B") || !strcmp(command, "back")) Car_PostDir(CAR_SRC_MANUAL, CAR_DIR_BACKWARD, g_speed);
+    else if (!strcmp(command, "L") || !strcmp(command, "left")) Car_PostTurn(CAR_SRC_MANUAL, CAR_DIR_LEFT, g_speed);
+    else if (!strcmp(command, "R") || !strcmp(command, "right")) Car_PostTurn(CAR_SRC_MANUAL, CAR_DIR_RIGHT, g_speed);
     else Car_Stop();
 }
 

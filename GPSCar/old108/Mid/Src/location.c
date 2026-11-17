@@ -24,6 +24,7 @@
 ***/
 
 #include "location.h"
+#include "menu.h"		/* 用 g_mpu 作为"最近一帧 MPU 数据"的发布缓冲(见 Location_Update) */
 #include <math.h>
 #include <stdio.h>
 #include "delay.h"
@@ -258,6 +259,10 @@ void Location_Update(uint32_t now)
 
 	/* 3. 惯导推算 */
 	mpuOK = (MPU6050_ReadData(&mpu) == 0) ? 1 : 0;
+	/* 【单读者】全工程只有 NavTask(Location_Update) 读 MPU6050(I2C1)。
+	 * UiTask 原来也每 200ms 读一次, 两个任务交替操作同一组 I2C 寄存器会出现
+	 * NACK / 半新半旧的数据。这里把读到的值发布到 g_mpu 供菜单显示。 */
+	if (mpuOK) g_mpu = mpu;
 
 	if (s_firstRun)		// 首次调用只建立时间基准
 	{

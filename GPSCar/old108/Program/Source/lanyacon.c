@@ -119,11 +119,8 @@ static void LanyaCon_Apply(void)
 	}
 
 	/* M1 M2 左侧, M3 M4 右侧 */
-	Car_SetWheelSpeed(MOTOR_1, left);
-	Car_SetWheelSpeed(MOTOR_2, left);
-	Car_SetWheelSpeed(MOTOR_3, right);
-	Car_SetWheelSpeed(MOTOR_4, right);
-
+	/* 只投递"左右两侧速度", 真正写电机在 ControlTask(4个轮子一次写完, 不会半截) */
+	Car_PostLR(CAR_SRC_MANUAL, left, right);
 	s_wasControlling = 1;
 }
 

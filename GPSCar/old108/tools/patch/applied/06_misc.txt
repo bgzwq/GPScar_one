@@ -1,0 +1,34 @@
+#FILE Program/Source/asrpro.c
+#ENC gbk
+#OP before 0 #include "asrpro.h"
+/*=================================================================================================
+ * 【重要: 本文件当前没有参与编译】
+ *   1. Project/STM32F407.uvprojx 的文件列表里没有 asrpro.c(只有 eide.yml 那份旧配置里有),
+ *      所以 ASR_Init() 从来没被调用过, 语音模块实际是不工作的;
+ *   2. USART3(PD8/PD9) 现在归 LD19 激光雷达(lidar.c, 230400), 和本文件的语音模块冲突;
+ *   3. 更关键的是: 本文件里的 USART3_IRQHandler 如果被重新加回工程, 会和
+ *      lidar.c 里新补的 USART3_IRQHandler 撞成重复定义(L6200E), 而且两边对
+ *      USART3 的配置(波特率/中断使能)完全不同。
+ *   如果要恢复语音: 请把语音模块改到别的串口(或用 LD19 之外的方案), 不要直接
+ *   把这个文件加回工程。详见 第二次检查bug.md 的 C1 / C13。
+ *===============================================================================================*/
+#FILE Mid/Src/menu.c
+#ENC gbk
+#OP after 0 #include "lidar.h"
+#include "servo.h"
+#OP repl 2 	LCD_DisplayString(4, 64, "Servo:"); LCD_DisplayNumber(64, 64, (int32_t)g_servoAngle, 3);
+	if (Servo_IsEnabled())
+	{
+		LCD_DisplayString(4, 64, "Servo:"); LCD_DisplayNumber(64, 64, (int32_t)g_servoAngle, 3);
+		LCD_DisplayString(120, 64, "deg");
+	}
+	else
+	{
+		/* 舵机因供电不足被整体禁用(servo.c 函数体全注释), 显示 OFF 避免误解 */
+		LCD_DisplayString(4, 64, "Servo: OFF (disabled)");
+	}
+#OP repl 1 LCD_DisplayString(4, 200, "Reset only by ESP cmd or K3");
+	/* 当前是谁在驱动底盘(CAR_SRC_*: 1=摇杆/2=避障/3=视觉/4=自检), 0=还没收到过命令 */
+	LCD_DisplayString(4, 200, "Src:");
+	LCD_DisplayNumber(44, 200, Car_GetActiveSrc(), 1);
+	LCD_DisplayString(64, 200, "reset: ESP cmd / K3");

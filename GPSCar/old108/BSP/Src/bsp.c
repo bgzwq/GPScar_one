@@ -88,6 +88,7 @@ void BSP_Init(void)
     NavLog_Init();          /* mount SD and open 0:/CARLOG/TRACK.CSV        */
     MapView_Init();         /* track + topology map view                    */
     MapCollent_Init();      /* 200 semantic nodes + one 64x64 local grid    */
+	App_IwdgInit();         /* optional IWDG, no-op while APP_USE_IWDG == 0   */
 }
 
 /**
@@ -97,4 +98,40 @@ void BSP_Init(void)
 uint8_t BSP_IsMpuReady(void)
 {
     return s_mpuReady;
+}
+/*----------------------------------------------------------------------------
+ *  Optional independent watchdog
+ *----------------------------------------------------------------------------
+ *  Why it is off by default:
+ *    - a wrong timeout turns every debug session into a reset loop;
+ *    - the current hang sources (missing USART3 IRQ, blocking ultrasonic)
+ *      are already fixed, so a watchdog is a safety net, not a fix.
+ *
+ *  When enabled, the IWDG is clocked by LSI (30~60 kHz, so the real timeout
+ *  is roughly half..double of the nominal value below) and it CANNOT be
+ *  stopped once started - only a power cycle or a reset clears it.
+ *
+ *  Feed it from exactly ONE place (see LedTask in MY/main.c). If that task
+ *  stops running (higher priority task spins forever), the MCU resets.
+ *--------------------------------------------------------------------------*/
+#define APP_USE_IWDG        0       /* 1 = enable, 0 = disabled (default) */
+#define IWDG_PRESCALER      4       /* 0:/4 1:/8 2:/16 3:/32 4:/64 5:/128 6:/256 */
+#define IWDG_RELOAD         1000    /* LSI/64 = 500 Hz -> 1000 = 2 s nominal */
+
+void App_IwdgInit(void)
+{
+#if APP_USE_IWDG
+	IWDG->KR  = 0x5555;                 /* unlock PR/RLR                    */
+	IWDG->PR  = IWDG_PRESCALER;
+	IWDG->RLR = IWDG_RELOAD;
+	IWDG->KR  = 0xAAAA;                 /* load the counter                 */
+	IWDG->KR  = 0xCCCC;                 /* start: cannot be stopped anymore */
+#endif
+}
+
+void App_IwdgFeed(void)
+{
+#if APP_USE_IWDG
+	IWDG->KR = 0xAAAA;
+#endif
 }

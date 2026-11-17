@@ -19,6 +19,7 @@
 ***/
 
 #include "encoder.h"
+#include <stdio.h>		/* Encoder_DiagDump() 用的 printf */
 
 typedef struct
 {
@@ -103,7 +104,13 @@ void Encoder_Init(void)
 		TIM_ICInitStructure.TIM_ICPolarity  = TIM_ICPolarity_Rising;
 		TIM_ICInitStructure.TIM_ICSelection = TIM_ICSelection_DirectTI;
 		TIM_ICInitStructure.TIM_ICPrescaler = TIM_ICPSC_DIV1;
-		TIM_ICInitStructure.TIM_ICFilter    = 0x0F;
+		/* 输入捕获滤波, 抑制毛刺。
+		 * 【2026-11 调整】原来 0x0F = 连续 8 次采样一致才认边沿(fDTS/32),
+		 * 对"集电极开路输出 + 依赖 MCU 内部弱上拉"的编码器来说边沿偏慢,
+		 * 慢沿会被整段滤掉 -> 表现为"某几路完全没示数"。
+		 * 改成 0x03(连续 4 次, fDTS/16): 保留去毛刺, 又不会吃掉慢边沿。
+		 * 若线路干扰大、读数偶发跳变, 可以往回调大(0x07 / 0x0B)。 */
+		TIM_ICInitStructure.TIM_ICFilter    = 0x03;
 		TIM_ICInit(s_encHW[i].tim, &TIM_ICInitStructure);
 		TIM_ICInitStructure.TIM_Channel = TIM_Channel_2;
 		TIM_ICInit(s_encHW[i].tim, &TIM_ICInitStructure);
@@ -167,4 +174,49 @@ void Encoder_ClearTotal(uint8_t id)
 {
 	if (id >= ENCODER_NUM) return;
 	s_total[id] = 0;
+}
+/*************************************************************************************************
+*	函 数 名:	Encoder_DiagDump
+*
+*	函数功能:	【诊断】把 4 路编码器相关寄存器一次性打印出来
+*
+*	说    明:	某一路"转轮子没示数"时, 这一条打印可以一次分清三类原因:
+*				  1) 信号没进 MCU / 引脚被板载外设占用 -> IDR 对应位不跟轮子变
+*				  2) 引脚复用没生效(被别处重配)        -> MODER/AFR0 不是 AF2
+*				  3) 定时器没跑 / 没配成编码器模式      -> CR1.CEN=0 或 SMCR.SMS!=3
+*				调用: 电机自检(KEY4)阶段3每秒自动打印一次, 也可自己挂到串口命令。
+*
+*	期 望 值(拿正常工作的 TIM4/TIM8 当参照对比):
+*				GPIOA->MODER : PA0/PA1/PA6/PA7 的 2bit = 10 (AF)
+*				GPIOA->AFR[0]: 第 0/1/6/7 个半字节 = 2 (AF2)
+*				TIMx->CR1    : bit0(CEN)=1
+*				TIMx->SMCR   : SMS[2:0]=011 (编码器 TI1+TI2 双边沿)
+*				TIMx->CCMR1  : CC1S[1:0]=01, CC2S[9:8]=01
+*				TIMx->CCER   : bit0(CC1E)=1, bit4(CC2E)=1
+*
+*************************************************************************************************/
+void Encoder_DiagDump(void)
+{
+	printf("\r\n[ENC-DIAG] GPIOA MODER=%08lX AFR0=%08lX IDR=%08lX\r\n",
+		   (unsigned long)GPIOA->MODER, (unsigned long)GPIOA->AFR[0],
+		   (unsigned long)GPIOA->IDR);
+	printf("[ENC-DIAG] PA0/PA1/PA6/PA7 = %u %u %u %u  (手转轮子时应看到跳变)\r\n",
+		   (unsigned)((GPIOA->IDR >> 0) & 1u), (unsigned)((GPIOA->IDR >> 1) & 1u),
+		   (unsigned)((GPIOA->IDR >> 6) & 1u), (unsigned)((GPIOA->IDR >> 7) & 1u));
+	printf("[ENC-DIAG] TIM5 CNT=%5lu CR1=%08lX SMCR=%08lX CCMR1=%08lX CCER=%04lX\r\n",
+		   (unsigned long)TIM5->CNT, (unsigned long)TIM5->CR1, (unsigned long)TIM5->SMCR,
+		   (unsigned long)TIM5->CCMR1, (unsigned long)TIM5->CCER);
+	printf("[ENC-DIAG] TIM3 CNT=%5lu CR1=%08lX SMCR=%08lX CCMR1=%08lX CCER=%04lX\r\n",
+		   (unsigned long)TIM3->CNT, (unsigned long)TIM3->CR1, (unsigned long)TIM3->SMCR,
+		   (unsigned long)TIM3->CCMR1, (unsigned long)TIM3->CCER);
+	printf("[ENC-DIAG] TIM4 CNT=%5lu CR1=%08lX SMCR=%08lX CCMR1=%08lX CCER=%04lX\r\n",
+		   (unsigned long)TIM4->CNT, (unsigned long)TIM4->CR1, (unsigned long)TIM4->SMCR,
+		   (unsigned long)TIM4->CCMR1, (unsigned long)TIM4->CCER);
+	printf("[ENC-DIAG] TIM8 CNT=%5lu CR1=%08lX SMCR=%08lX CCMR1=%08lX CCER=%04lX\r\n",
+		   (unsigned long)TIM8->CNT, (unsigned long)TIM8->CR1, (unsigned long)TIM8->SMCR,
+		   (unsigned long)TIM8->CCMR1, (unsigned long)TIM8->CCER);
+	printf("[ENC-DIAG] RCC APB1ENR=%08lX(bit1=TIM3 bit2=TIM4 bit3=TIM5) APB2ENR=%08lX(bit0=TIM8)\r\n",
+		   (unsigned long)RCC->APB1ENR, (unsigned long)RCC->APB2ENR);
+	printf("[ENC-DIAG] ACC: ENC1=%ld ENC2=%ld ENC3=%ld ENC4=%ld\r\n",
+		   (long)s_total[0], (long)s_total[1], (long)s_total[2], (long)s_total[3]);
 }

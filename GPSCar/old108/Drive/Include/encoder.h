@@ -22,5 +22,6 @@ void 	Encoder_Init(void);							// 编码器初始化
 int16_t Encoder_ReadDelta(uint8_t id);				// 读取距上次读取的脉冲增量(带方向)
 int32_t Encoder_GetTotal(uint8_t id);				// 读取累计脉冲数
 void 	Encoder_ClearTotal(uint8_t id);				// 清零累计脉冲数
+void 	Encoder_DiagDump(void);						// 【诊断】打印4路编码器相关寄存器(查没示数用)
 
 #endif //__ENCODER_H

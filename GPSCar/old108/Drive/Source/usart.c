@@ -107,11 +107,17 @@ static uint8_t Usart_DebugLock(void)
 int fputc(int c, FILE *fp)
 {
 	uint8_t locked = Usart_DebugLock();
+	uint32_t guard = 0;
 
 	(void)fp;
 
 	USART_SendData( USART1, (u8)c );					// 发送单字节数据
-	while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);	// 等待发送完毕
+		/* 原来是无上限死等: 万一 USART1 时钟/引脚出问题, 这里会把整个任务永久卡住
+		 * (而且是在持有 printf 互斥量的情况下)。加一个上限, 正常发送永远走不到。 */
+		while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET)
+		{
+			if (++guard > 200000u) break;
+		}
 
 	if (locked)
 	{

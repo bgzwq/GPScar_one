@@ -1,0 +1,244 @@
+#FILE Drive/Include/encoder.h
+#ENC gbk
+#OP after 0 Encoder_ClearTotal(uint8_t id);
+void 	Encoder_DiagDump(void);						// 【诊断】打印4路编码器相关寄存器(查没示数用)
+#FILE Drive/Source/encoder.c
+#ENC gbk
+#OP after 0 #include "encoder.h"
+#include <stdio.h>		/* Encoder_DiagDump() 用的 printf */
+#OP repl 1 TIM_ICFilter
+        /* 输入捕获滤波, 抑制毛刺。
+         * 【2026-11 调整】原来 0x0F = 连续 8 次采样一致才认边沿(fDTS/32),
+         * 对"集电极开路输出 + 依赖 MCU 内部弱上拉"的编码器来说边沿偏慢,
+         * 慢沿会被整段滤掉 -> 表现为"某几路完全没示数"。
+         * 改成 0x03(连续 4 次, fDTS/16): 保留去毛刺, 又不会吃掉慢边沿。
+         * 若线路干扰大、读数偶发跳变, 可以往回调大(0x07 / 0x0B)。 */
+        TIM_ICInitStructure.TIM_ICFilter    = 0x03;
+#OP eof 0 .
+/*************************************************************************************************
+*	函 数 名:	Encoder_DiagDump
+*
+*	函数功能:	【诊断】把 4 路编码器相关寄存器一次性打印出来
+*
+*	说    明:	某一路"转轮子没示数"时, 这一条打印可以一次分清三类原因:
+*				  1) 信号没进 MCU / 引脚被板载外设占用 -> IDR 对应位不跟轮子变
+*				  2) 引脚复用没生效(被别处重配)        -> MODER/AFR0 不是 AF2
+*				  3) 定时器没跑 / 没配成编码器模式      -> CR1.CEN=0 或 SMCR.SMS!=3
+*				调用: 电机自检(KEY4)阶段3每秒自动打印一次, 也可自己挂到串口命令。
+*
+*	期 望 值(拿正常工作的 TIM4/TIM8 当参照对比):
+*				GPIOA->MODER : PA0/PA1/PA6/PA7 的 2bit = 10 (AF)
+*				GPIOA->AFR[0]: 第 0/1/6/7 个半字节 = 2 (AF2)
+*				TIMx->CR1    : bit0(CEN)=1
+*				TIMx->SMCR   : SMS[2:0]=011 (编码器 TI1+TI2 双边沿)
+*				TIMx->CCMR1  : CC1S[1:0]=01, CC2S[9:8]=01
+*				TIMx->CCER   : bit0(CC1E)=1, bit4(CC2E)=1
+*
+*************************************************************************************************/
+void Encoder_DiagDump(void)
+{
+    printf("\r\n[ENC-DIAG] GPIOA MODER=%08lX AFR0=%08lX IDR=%08lX\r\n",
+           (unsigned long)GPIOA->MODER, (unsigned long)GPIOA->AFR[0],
+           (unsigned long)GPIOA->IDR);
+    printf("[ENC-DIAG] PA0/PA1/PA6/PA7 = %u %u %u %u  (手转轮子时应看到跳变)\r\n",
+           (unsigned)((GPIOA->IDR >> 0) & 1u), (unsigned)((GPIOA->IDR >> 1) & 1u),
+           (unsigned)((GPIOA->IDR >> 6) & 1u), (unsigned)((GPIOA->IDR >> 7) & 1u));
+    printf("[ENC-DIAG] TIM5 CNT=%5lu CR1=%08lX SMCR=%08lX CCMR1=%08lX CCER=%04lX\r\n",
+           (unsigned long)TIM5->CNT, (unsigned long)TIM5->CR1, (unsigned long)TIM5->SMCR,
+           (unsigned long)TIM5->CCMR1, (unsigned long)TIM5->CCER);
+    printf("[ENC-DIAG] TIM3 CNT=%5lu CR1=%08lX SMCR=%08lX CCMR1=%08lX CCER=%04lX\r\n",
+           (unsigned long)TIM3->CNT, (unsigned long)TIM3->CR1, (unsigned long)TIM3->SMCR,
+           (unsigned long)TIM3->CCMR1, (unsigned long)TIM3->CCER);
+    printf("[ENC-DIAG] TIM4 CNT=%5lu CR1=%08lX SMCR=%08lX CCMR1=%08lX CCER=%04lX\r\n",
+           (unsigned long)TIM4->CNT, (unsigned long)TIM4->CR1, (unsigned long)TIM4->SMCR,
+           (unsigned long)TIM4->CCMR1, (unsigned long)TIM4->CCER);
+    printf("[ENC-DIAG] TIM8 CNT=%5lu CR1=%08lX SMCR=%08lX CCMR1=%08lX CCER=%04lX\r\n",
+           (unsigned long)TIM8->CNT, (unsigned long)TIM8->CR1, (unsigned long)TIM8->SMCR,
+           (unsigned long)TIM8->CCMR1, (unsigned long)TIM8->CCER);
+    printf("[ENC-DIAG] RCC APB1ENR=%08lX(bit1=TIM3 bit2=TIM4 bit3=TIM5) APB2ENR=%08lX(bit0=TIM8)\r\n",
+           (unsigned long)RCC->APB1ENR, (unsigned long)RCC->APB2ENR);
+    printf("[ENC-DIAG] ACC: ENC1=%ld ENC2=%ld ENC3=%ld ENC4=%ld\r\n",
+           (long)s_total[0], (long)s_total[1], (long)s_total[2], (long)s_total[3]);
+}
+#FILE Program/Source/lidar.c
+#ENC gbk
+#OP eof 0 .
+/*************************************************************************************************
+*	函 数 名:	USART3_IRQHandler
+*
+*	函数功能:	LD19 雷达的空闲中断: 只负责把 IDLE 标志清掉
+*
+*	说    明:	【这是一个必须存在的中断函数】
+*				Lidar_Init() 里使能了 USART3 的 IDLE 中断和 NVIC, 但工程里原来
+*				只有 asrpro.c 定义过 USART3_IRQHandler, 而 asrpro.c 并没有加进
+*				Keil 工程 -> 向量表里 USART3 落在启动文件的 [WEAK] Default_Handler
+*				(B . 死循环)。只要雷达开始吐数据, 总线上一定出现空闲 -> IDLE 置位
+*				-> 进死循环, 而且 IDLE 没人清, 中断会一直挂着 -> 整车像卡死。
+*				清 IDLE 的顺序必须是"先读 SR 再读 DR", 这里 USART_GetITStatus()
+*				读 SR、USART_ReceiveData() 读 DR, 正好满足要求(与 gps.c 同款写法)。
+*				真正的数据搬运仍然由 Lidar_Process() 从 DMA 缓冲里做。
+*
+*************************************************************************************************/
+void USART3_IRQHandler(void)
+{
+    if (USART_GetITStatus(USART3, USART_IT_IDLE) != RESET)
+    {
+        USART_ReceiveData(USART3);		/* 读 SR + DR, 清除 IDLE 标志(不能省) */
+    }
+}
+#FILE Drive/Include/usart.h
+#ENC gbk
+#OP repl 1 USART1_BaudRate
+/* USART1 = 调试 printf + K230 视觉, 两者共用一根线。
+ * 【2026-11 统一】K230 协议(K230.h)写的是 115200, 原来这里是 9600,
+ * 结果 K230 帧全是乱码, 而且 printf 一个字符要 1.04ms(整屏菜单要几百毫秒)。
+ * 这里改成 115200: printf 快 12 倍, 与 K230 协议一致。
+ * 如果 K230 端确实是 9600, 只改这一行即可(但 printf 会变慢)。 */
+#define  USART1_BaudRate  115200
+#FILE Drive/Source/usart.c
+#ENC gbk
+#OP after 0 uint8_t locked = Usart_DebugLock();
+    uint32_t guard = 0;
+#OP repl 1 USART_GetFlagStatus(USART1, USART_FLAG_TXE)
+        /* 原来是无上限死等: 万一 USART1 时钟/引脚出问题, 这里会把整个任务永久卡住
+         * (而且是在持有 printf 互斥量的情况下)。加一个上限, 正常发送永远走不到。 */
+        while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET)
+        {
+            if (++guard > 200000u) break;
+        }
+#FILE Drive/Source/key.c
+#ENC gbk
+#OP repl 1 while(GPIO_ReadInputDataBit
+            {	/* [2026-11] 原来是 while(按下); 无上限死等: 按键卡住/引脚短路就永久死循环。
+                 * 改成有上限轮询(最长约1秒)后返回, 保证不会把调用者卡死。
+                 * 注意: 本文件目前没有被工程引用(BSP_Init 不调 KEY_Init), 属预留代码。 */
+                uint32_t guard = 0;
+                while (GPIO_ReadInputDataBit(KEY_PORT, KEY_PIN) == 0)
+                {
+                    Delay_ms(1);
+                    if (++guard > 1000u) break;
+                }
+            }
+#FILE Drive/Include/servo.h
+#ENC gbk
+#OP after 0 Servo_SetPulse(uint16_t pulseUs);
+uint8_t Servo_IsEnabled(void);					// 舵机是否可用: 0=已禁用(当前恒为0)
+#FILE Drive/Source/servo.c
+#ENC gbk
+#OP eof 0 .
+/*************************************************************************************************
+*	函 数 名:	Servo_IsEnabled
+*
+*	返 回 值:	0 - 舵机不可用(当前状态)
+*
+*	函数功能:	告诉上层"舵机到底有没有在动"
+*
+*	说    明:	本文件的三个函数体都因为供电不足被整体注释掉了, TIM12 没开时钟、
+*				PB14 也没初始化, 所以 Servo_SetAngle() 是空操作。菜单用它来显示
+*				"Servo: OFF", 避免雷达/避障摆头看起来像"坏了"。
+*				恢复舵机时: 取消下面三个函数的注释, 并让本函数返回 1。
+*
+*************************************************************************************************/
+uint8_t Servo_IsEnabled(void)
+{
+    return 0;
+}
+#FILE Program/Source/estop.c
+#ENC gbk
+#OP after 0 static uint32_t s_count;
+static uint8_t  s_stopped;		// 1=本次急停已经停过车(避免每5ms重复写TIM1比较寄存器)
+#OP after 0 if (!s_active) s_count++;
+    s_stopped = 1;
+#OP repl 5 if (s_active)
+    if (s_active)
+    {
+        if (!s_stopped)			/* 只停一次: 之后每5ms只保证 STBY 是低的 */
+        {
+            s_stopped = 1;
+            Car_Stop();
+        }
+        GPIO_ResetBits(ESTOP_STBY_PORT, ESTOP_STBY_PIN);
+    }
+#OP after 0 s_source = 0;
+    s_stopped = 0;
+#FILE MY/stm32f4xx_it.c
+#ENC gbk
+#OP after 0 #include "sdio_sd.h"
+#include <stdio.h>
+#OP repl 7 void HardFault_Handler(void)
+void HardFault_Handler(void)
+{
+    /* [2026-11] 原来只是 while(1), 现场什么都看不到。
+     * 现在把 Cortex-M4 的故障寄存器打出来(用当前 MSP 的 ISR 栈, 4KB 够用),
+     * 然后把 PC/LR 也留一份在静态变量里, 调试器停在这里就能看到。
+     * 常见判读: CFSR 的 bit[7:0]=MMFSR(存储器), bit[15:8]=BFSR(总线),
+     *           bit[31:16]=UFSR(用法故障); HFSR bit30=FORCED; MMFAR/BFAR=出错地址。
+     * 注意: 打印完仍然死循环, 保留现场给调试器, 不做自动复位。 */
+    volatile uint32_t cfsr  = SCB->CFSR;
+    volatile uint32_t hfsr  = SCB->HFSR;
+    volatile uint32_t mmfar = SCB->MMFAR;
+    volatile uint32_t bfar  = SCB->BFAR;
+
+    printf("\r\n[HARDFAULT] CFSR=%08lX HFSR=%08lX MMFAR=%08lX BFAR=%08lX\r\n",
+           (unsigned long)cfsr, (unsigned long)hfsr,
+           (unsigned long)mmfar, (unsigned long)bfar);
+    printf("[HARDFAULT] (MMFSR=%02lX BFSR=%02lX UFSR=%04lX)\r\n",
+           (unsigned long)(cfsr & 0xFFu), (unsigned long)((cfsr >> 8) & 0xFFu),
+           (unsigned long)((cfsr >> 16) & 0xFFFFu));
+
+    while (1)
+    {
+    }
+}
+#FILE BSP/Inc/bsp.h
+#ENC gbk
+#OP after 0 uint8_t BSP_IsMpuReady(void);
+/**
+  * @brief  Optional independent watchdog (IWDG). Disabled by default.
+  * @note   Enable with APP_USE_IWDG=1 in bsp.c, then call App_IwdgFeed()
+  *         periodically from a task that is guaranteed to keep running
+  *         (the LED heartbeat is a good place).
+  */
+void App_IwdgInit(void);
+void App_IwdgFeed(void);
+#FILE BSP/Src/bsp.c
+#ENC gbk
+#OP after 0 MapCollent_Init();
+    App_IwdgInit();         /* optional IWDG, no-op while APP_USE_IWDG == 0   */
+#OP eof 0 .
+/*----------------------------------------------------------------------------
+ *  Optional independent watchdog
+ *----------------------------------------------------------------------------
+ *  Why it is off by default:
+ *    - a wrong timeout turns every debug session into a reset loop;
+ *    - the current hang sources (missing USART3 IRQ, blocking ultrasonic)
+ *      are already fixed, so a watchdog is a safety net, not a fix.
+ *
+ *  When enabled, the IWDG is clocked by LSI (30~60 kHz, so the real timeout
+ *  is roughly half..double of the nominal value below) and it CANNOT be
+ *  stopped once started - only a power cycle or a reset clears it.
+ *
+ *  Feed it from exactly ONE place (see LedTask in MY/main.c). If that task
+ *  stops running (higher priority task spins forever), the MCU resets.
+ *--------------------------------------------------------------------------*/
+#define APP_USE_IWDG        0       /* 1 = enable, 0 = disabled (default) */
+#define IWDG_PRESCALER      4       /* 0:/4 1:/8 2:/16 3:/32 4:/64 5:/128 6:/256 */
+#define IWDG_RELOAD         1000    /* LSI/64 = 500 Hz -> 1000 = 2 s nominal */
+
+void App_IwdgInit(void)
+{
+#if APP_USE_IWDG
+    IWDG->KR  = 0x5555;                 /* unlock PR/RLR                    */
+    IWDG->PR  = IWDG_PRESCALER;
+    IWDG->RLR = IWDG_RELOAD;
+    IWDG->KR  = 0xAAAA;                 /* load the counter                 */
+    IWDG->KR  = 0xCCCC;                 /* start: cannot be stopped anymore */
+#endif
+}
+
+void App_IwdgFeed(void)
+{
+#if APP_USE_IWDG
+    IWDG->KR = 0xAAAA;
+#endif
+}
